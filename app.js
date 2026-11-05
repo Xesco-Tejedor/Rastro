@@ -169,6 +169,40 @@ async function queryGoogleBooks(query, isbn) {
   });
 }
 
+/* Resolución de EDICIÓN en el idioma elegido. El filtro language= de Open
+   Library es a nivel de OBRA; aquí se confirma la edición concreta leyendo
+   los metadatos de sus ediciones (nunca se infiere por título o portada). */
+async function editionsInLang(work, L) {
+  const data = await fetchJson(`https://openlibrary.org${work.key}/editions.json?limit=50`);
+  const langKey = "/languages/" + L.ol;
+  return (data.entries || [])
+    .filter((e) => (e.languages || []).some((x) => x.key === langKey))
+    .map((e) => {
+      const y = (e.publish_date || "").match(/(\d{4})/);
+      return {
+        source: "Open Library",
+        key: e.key,
+        title: e.title || work.title,
+        authors: work.authors,
+        year: y ? y[1] : null,
+        publisher: (e.publishers || [])[0] || null,
+        isbn: (e.isbn_13 || [])[0] || (e.isbn_10 || [])[0] || null,
+        isbns: [...(e.isbn_13 || []), ...(e.isbn_10 || [])],
+        cover: (e.covers && e.covers.length) ? `https://covers.openlibrary.org/b/id/${e.covers[0]}-M.jpg` : work.cover,
+        workUrl: "https://openlibrary.org" + e.key,
+        ia: e.ocaid ? [e.ocaid] : [],
+        editionLang: L.label,
+      };
+    });
+}
+
+/* Acceso por ÍTEM en Archive.org, de los metadatos del propio ítem:
+   restringido -> préstamo por comprobar; no restringido -> lectura en línea. */
+async function iaAccess(ocaid) {
+  const md = ((await fetchJson(`https://archive.org/metadata/${encodeURIComponent(ocaid)}`)).metadata) || {};
+  return String(md["access-restricted-item"]) === "true" ? "borrowable" : "public";
+}
+
 /* ---------- Búsqueda directa en tiendas (esta versión no las consulta) ---------- */
 
 function storeLinks(query, isbn) {
@@ -488,10 +522,26 @@ function cardBadges(book) {
   return out.join("");
 }
 
-function renderFree(olBooks, iaDocs) {
+function renderFree(olBooks, iaDocs, filteredFree, L) {
   const box = $("#free-cards");
   const pendingBox = $("#pending-cards");
   const pendingWrap = $("#free-pending");
+  let known;
+  if (filteredFree) {
+    /* Modo idioma: solo ejemplares cuya edición está confirmada en ese idioma
+       por metadatos de Open Library, con acceso leído del propio ítem en
+       Archive.org. */
+    box.innerHTML = filteredFree.slice(0, 8).map((b) => `
+      <div class="card" data-ia="${esc(b.ia[0])}">
+        ${b.cover ? `<img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+        <div class="card-badges">${b.access === "public" ? '<span class="badge badge-free">lectura gratis</span>' : '<span class="badge badge-pending">préstamo: por comprobar</span>'}</div>
+        <h3>${esc(b.title)}</h3>
+        <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
+        <p class="meta">Edición en ${esc(L.label)} confirmada por metadatos · ${b.access === "public" ? "Lectura en línea" : "Préstamo con cuenta gratuita, disponibilidad por comprobar en la ficha"} · Archive.org</p>
+        ${refBtn({ ...b, kind: "ebook", url: `https://archive.org/details/${b.ia[0]}` })}
+      </div>`).join("") || `<p class="empty-note">No se ha confirmado acceso gratuito a una edición en ${esc(L.label)} para esta búsqueda.</p>`;
+    known = new Set(filteredFree.map((b) => b.ia[0]));
+  } else {
   const withAccess = olBooks.filter((b) => b.ia && b.ia.length && (b.ebookAccess === "public" || b.ebookAccess === "borrowable"));
   let html = "";
   withAccess.slice(0, 8).forEach((b) => {
@@ -508,10 +558,13 @@ function renderFree(olBooks, iaDocs) {
     </div>`;
   });
   box.innerHTML = html || '<p class="empty-note">No se ha confirmado acceso gratuito (lectura o préstamo) para esta búsqueda en Open Library / Archive.org.</p>';
+  known = new Set(withAccess.flatMap((b) => b.ia));
+  }
 
   /* Hallazgos de Archive.org sin disponibilidad confirmada: separados y
-     filtrados para no presentar como hallazgo algo ajeno a la búsqueda. */
-  const known = new Set(withAccess.flatMap((b) => b.ia));
+     filtrados para no presentar como hallazgo algo ajeno a la búsqueda.
+     Con idioma elegido, el idioma de cada ítem ya viene filtrado por la
+     propia búsqueda de Archive.org (metadatos por ítem). */
   const extra = iaDocs
     .filter((d) => !known.has(d.identifier))
     .filter((d) => matchesQueryLoose(d.title, d.creator))
@@ -520,7 +573,7 @@ function renderFree(olBooks, iaDocs) {
       <div class="card-badges"><span class="badge badge-pending">por comprobar</span></div>
       <h3>${esc(d.title)}</h3>
       <p class="meta">${esc(d.creator)}${d.year ? " · " + esc(d.year) : ""}</p>
-      <p class="meta">Ejemplar localizado en Archive.org · condiciones de acceso en la ficha</p>
+      <p class="meta">${L ? `Idioma (${esc(L.label)}) confirmado en los metadatos del ítem · ` : "Ejemplar localizado en Archive.org · "}condiciones de acceso en la ficha</p>
       ${refBtn({ title: d.title, authors: d.creator ? [d.creator] : [], year: d.year, url: d.url, kind: "ebook" })}
     </div>`).join("");
   pendingWrap.hidden = extra.length === 0;
@@ -529,8 +582,11 @@ function renderFree(olBooks, iaDocs) {
     c.addEventListener("click", () => window.open(`https://archive.org/details/${c.dataset.ia}`, "_blank", "noopener")));
 }
 
-function renderCdl(items) {
+function renderCdl(items, L) {
   const box = $("#cdl-cards");
+  const btn = $("#cdl-show-unfiltered");
+  $("#cdl-note").textContent = "Precio y disponibilidad online comunicados ahora mismo por la propia tienda." +
+    (L ? " Casa del Libro no indica el idioma de cada libro en su consulta: con un idioma elegido, sus resultados quedan apartados porque Rastro no puede confirmarlo." : "");
   box.innerHTML = items.slice(0, 8).map((b, i) => `
     <div class="card" data-cdl="${i}">
       <h3>${esc(b.name)}</h3>
@@ -547,13 +603,26 @@ function renderCdl(items) {
       const b = items[+c.dataset.cdl];
       if (b && b.url) window.open(b.url, "_blank", "noopener");
     }));
+  /* Con idioma elegido, los resultados sin filtrar se ocultan por defecto;
+     el usuario decide verlos con un botón explícito y rotulado. */
+  if (L && items.length) {
+    box.hidden = true;
+    btn.hidden = false;
+    btn.textContent = `Ver ${items.length} resultados de Casa del Libro sin filtrar por idioma (la tienda no lo comunica)`;
+    btn.onclick = () => { box.hidden = false; btn.hidden = true; };
+  } else {
+    box.hidden = false;
+    btn.hidden = true;
+  }
 }
 
-function renderCatalog(olBooks, gbBooks, gbError) {
+function renderCatalog(olBooks, gbBooks, gbError, editionCards, unconfirmed, L) {
   const box = $("#catalog-cards");
-  let html = olBooks.slice(0, 12).map((b, i) => `
+  const src = editionCards || olBooks;
+  let html = src.slice(0, 12).map((b, i) => `
     <div class="card" data-ol="${i}">
       ${b.cover ? `<img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+      ${b.editionLang ? `<div class="card-badges"><span class="badge badge-real">edición en ${esc(b.editionLang)}</span></div>` : ""}
       <h3>${esc(b.title)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
       ${b.publisher ? `<p class="meta">${esc(b.publisher)}</p>` : ""}
@@ -562,7 +631,7 @@ function renderCatalog(olBooks, gbBooks, gbError) {
     </div>`).join("");
   if (gbBooks && gbBooks.length) {
     // Solo fichas de Google Books que no dupliquen título+autor de Open Library
-    const seen = new Set(olBooks.map((b) => (b.title + "|" + b.authors.join(",")).toLowerCase()));
+    const seen = new Set(src.map((b) => (b.title + "|" + b.authors.join(",")).toLowerCase()));
     const extra = gbBooks.filter((g) => !seen.has((g.title + "|" + g.authors.join(",")).toLowerCase())).slice(0, 6);
     extra.forEach((g) => {
       html += `<div class="card" data-gb>
@@ -576,9 +645,27 @@ function renderCatalog(olBooks, gbBooks, gbError) {
       </div>`;
     });
   }
-  box.innerHTML = html || `<p class="empty-note">No hay fichas bibliográficas para esta búsqueda en Open Library${gbError ? " y Google Books no está disponible ahora" : ""}.</p>`;
+  box.innerHTML = html || `<p class="empty-note">${L ? `No se ha confirmado ninguna edición en ${esc(L.label)} en Open Library para esta búsqueda` : `No hay fichas bibliográficas para esta búsqueda en Open Library`}${gbError ? " y Google Books no está disponible ahora" : ""}.</p>`;
   box.querySelectorAll(".card[data-ol]").forEach((c) =>
-    c.addEventListener("click", () => openModal(olBooks[+c.dataset.ol])));
+    c.addEventListener("click", () => openModal(src[+c.dataset.ol])));
+  /* Obras que Open Library sitúa en el idioma pero cuya edición concreta no
+     se ha identificado: separadas y rotuladas, fuera de las coincidencias. */
+  const uw = $("#catalog-unconfirmed");
+  if (L && unconfirmed && unconfirmed.length) {
+    $("#unconfirmed-cards").innerHTML = unconfirmed.slice(0, 6).map((b, i) => `
+      <div class="card" data-uu="${i}">
+        ${b.cover ? `<img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+        <div class="card-badges"><span class="badge badge-pending">idioma del ejemplar sin confirmar</span></div>
+        <h3>${esc(b.title)}</h3>
+        <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
+        ${refBtn(b)}
+      </div>`).join("");
+    uw.hidden = false;
+    $("#unconfirmed-cards").querySelectorAll(".card[data-uu]").forEach((c) =>
+      c.addEventListener("click", () => openModal(unconfirmed[+c.dataset.uu])));
+  } else {
+    uw.hidden = true;
+  }
   box.querySelectorAll(".card[data-gb]").forEach((c, i) =>
     c.addEventListener("click", () => { const l = gbBooks.filter((g) => g.link)[i]; if (l && l.link) window.open(l.link, "_blank", "noopener"); }));
 }
@@ -689,10 +776,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   $("#search-btn").disabled = true;
   clearChips();
   const L = activeLang();
-  setChip("lang", L ? `Idioma: ${L.label}` : "Idioma: todos", L ? "" : "");
-  /* Casa del Libro no comunica el idioma: no fingimos filtrar sus resultados. */
-  $("#cdl-note").textContent = "Precio y disponibilidad online comunicados ahora mismo por la propia tienda." +
-    (L ? " Casa del Libro no indica el idioma de cada libro en su consulta, así que estos resultados no están filtrados por idioma." : "");
+  setChip("lang", L ? `Idioma: ${L.label}` : "Idioma: todos", "");
   $("#free-cards").innerHTML = "";
   $("#pending-cards").innerHTML = "";
   $("#free-pending").hidden = true;
@@ -720,8 +804,29 @@ $("#search-form").addEventListener("submit", async (e) => {
     .catch(() => { setChip("gb", "Google Books: no disponible ahora (cuota)", "warn"); return { books: [], error: true }; });
 
   const [ol, ia, cdl, gb] = await Promise.all([olP, iaP, cdlP, gbP]);
-  renderFree(ol, ia);
-  renderCdl(cdl);
-  renderCatalog(ol, gb.books, gb.error);
+
+  /* Con idioma elegido: confirmar la EDICIÓN en ese idioma por metadatos.
+     Obras sin edición identificada -> bloque separado "sin confirmar".
+     Acceso gratuito: solo ítems de Archive.org de una edición confirmada,
+     con el acceso leído de los metadatos de cada ítem. */
+  let editionCards = null, unconfirmed = null, filteredFree = null;
+  if (L) {
+    editionCards = []; unconfirmed = []; filteredFree = [];
+    const perWork = await Promise.all(ol.map((w) => editionsInLang(w, L).catch(() => null)));
+    const iaCandidates = [];
+    perWork.forEach((eds, i) => {
+      if (!eds || !eds.length) { unconfirmed.push(ol[i]); return; }
+      editionCards.push(eds.find((e) => e.isbn || e.cover) || eds[0]);
+      eds.filter((e) => e.ia.length).forEach((e) => iaCandidates.push(e));
+    });
+    const withAccess = await Promise.all(
+      iaCandidates.slice(0, 8).map(async (e) => ({ ...e, access: await iaAccess(e.ia[0]).catch(() => "borrowable") }))
+    );
+    filteredFree = withAccess;
+  }
+
+  renderFree(ol, ia, filteredFree, L);
+  renderCdl(cdl, L);
+  renderCatalog(ol, gb.books, gb.error, editionCards, unconfirmed, L);
   $("#search-btn").disabled = false;
 });
