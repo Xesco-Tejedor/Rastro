@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.xescotejedor.rastro"
+    android:versionCode="2"
+    android:versionName="1.0.0-exp">
+  <!-- Unico permiso: INTERNET. La app es la version online de Rastro;
+       la lista de referencias se guarda en el dispositivo (localStorage del WebView). -->
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34"/>
+  <application
+      android:label="@string/app_name"
+      android:icon="@mipmap/ic_launcher"
+      android:usesCleartextTraffic="false"
+      android:allowBackup="true"
+      android:theme="@style/AppTheme">
+    <activity android:name=".MainActivity" android:exported="true"
+        android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
