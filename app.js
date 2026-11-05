@@ -240,7 +240,7 @@ function removeFromList(id) {
 /* ---- Datos que faltan: se señalan, nunca se inventan ---- */
 function missingFields(it) {
   const m = [];
-  if (!it.authors || !it.authors.length) m.push("autor");
+  if (!realAuthors(it.authors).length) m.push("autor");
   if (!it.year) m.push("año");
   if (!it.publisher) m.push("editorial");
   return m;
@@ -293,7 +293,7 @@ function plainName(full) { // "Apellidos, Nombre" -> "Nombre Apellidos"
 
 /* ---- Generadores de cita. Título en cursiva solo en HTML; al exportar, texto plano. ---- */
 function citeAPA7(it) {
-  const a = it.authors || [];
+  const a = realAuthors(it.authors);
   let auth;
   if (!a.length) auth = null;
   else if (a.length <= 20) {
@@ -312,7 +312,7 @@ function citeAPA7(it) {
 
 function citeChicago(it) {
   // Chicago 18, bibliografia (guia oficial CMOS): Apellido, Nombre [primer autor invertido; resto en orden natural]. Titulo. Editorial, Ano.
-  const a = it.authors || [];
+  const a = realAuthors(it.authors);
   const inv = (n) => { if (isOrg(n)) return n; const p = splitName(n); return p.given ? `${p.sur}, ${p.given}` : p.sur; };
   let auth = "";
   if (a.length === 1) auth = inv(a[0]) + ".";
@@ -328,7 +328,7 @@ function citeChicago(it) {
 }
 
 function citeMLA(it) {
-  const a = it.authors || [];
+  const a = realAuthors(it.authors);
   let auth = "";
   const inv1 = (n) => { if (isOrg(n)) return n; const p = splitName(n); return p.given ? `${p.sur}, ${p.given}` : p.sur; };
   if (a.length === 1) auth = inv1(a[0]) + ".";
@@ -340,10 +340,10 @@ function citeMLA(it) {
 }
 
 function citeBibTeX(it) {
-  const keyBase = it.authors && it.authors.length ? normTxt(splitName(it.authors[0]).sur).replace(/[^a-z]/g, "") : normTxt(it.title).split(" ")[0].replace(/[^a-z]/g, "");
+  const _ba = realAuthors(it.authors); const keyBase = _ba.length ? normTxt(splitName(it.authors[0]).sur).replace(/[^a-z]/g, "") : normTxt(it.title).split(" ")[0].replace(/[^a-z]/g, "");
   const key = `${keyBase}${it.year || "sf"}`;
   const lines = [`@book{${key},`];
-  if (it.authors && it.authors.length) lines.push(`  author = {${it.authors.map((n) => { const p = splitName(n); return p.given ? `${p.sur}, ${p.given}` : p.sur; }).join(" and ")}},`);
+  if (_ba.length) lines.push(`  author = {${_ba.map((n) => { const p = splitName(n); return p.given ? `${p.sur}, ${p.given}` : p.sur; }).join(" and ")}},`);
   lines.push(`  title = {${it.title}},`);
   if (it.year) lines.push(`  year = {${it.year}},`);
   if (it.publisher) lines.push(`  publisher = {${it.publisher}},`);
@@ -352,6 +352,9 @@ function citeBibTeX(it) {
   lines.push(`}`);
   return lines.join("\n");
 }
+
+const ANON_RE = /^(an[oó]nimo|anon\.?|anonymous)$/i;
+function realAuthors(a) { return (a || []).filter((n) => !ANON_RE.test(cleanName(n))); }
 
 const FORMATS = {
   apa7: { label: "APA 7ª ed.", fn: citeAPA7 },
@@ -362,7 +365,7 @@ const FORMATS = {
 
 function sortedList() {
   return loadList().slice().sort((x, y) =>
-    normTxt((x.authors[0] ? splitName(x.authors[0]).sur : x.title)).localeCompare(normTxt((y.authors[0] ? splitName(y.authors[0]).sur : y.title)), "es"));
+    normTxt((realAuthors(x.authors)[0] ? splitName(realAuthors(x.authors)[0]).sur : x.title)).localeCompare(normTxt((realAuthors(y.authors)[0] ? splitName(realAuthors(y.authors)[0]).sur : y.title)), "es"));
 }
 
 function renderList() {
@@ -405,7 +408,7 @@ function toggleEdit(id) {
   const form = document.createElement("div");
   form.className = "ref-edit";
   form.innerHTML = `
-    <label>Autores (separados por ;) <input data-f="authors" value="${esc((it.authors || []).join("; "))}"></label>
+    <label>Autores (separados por ;) — para fijar el apellido escribe «Apellido, Nombre»; una entidad (editorial, biblioteca…) se escribe completa tal cual <input data-f="authors" value="${esc((it.authors || []).join("; "))}"></label>
     <label>Título <input data-f="title" value="${esc(it.title)}"></label>
     <label>Año <input data-f="year" value="${esc(it.year || "")}" placeholder="vacío = s. f."></label>
     <label>Editorial <input data-f="publisher" value="${esc(it.publisher || "")}"></label>
