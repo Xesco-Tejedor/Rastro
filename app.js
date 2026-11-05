@@ -185,8 +185,6 @@ function saveList(list) {
 async function addToList(id) {
   const item = REF_REG[id];
   if (!item) return;
-  const list = loadList();
-  if (list.some((x) => x.id === id)) { renderList(); return; }
   const entry = {
     id,
     title: item.title || item.name || "Sin título",
@@ -221,8 +219,9 @@ async function addToList(id) {
       entry.publisher = null;
     }
   }
-  list.push(entry);
-  saveList(list);
+  /* loadList despues del await: evita perder entradas al añadir varias a la vez */
+  const list = loadList();
+  if (!list.some((x) => x.id === id)) { list.push(entry); saveList(list); }
   renderList();
 }
 
