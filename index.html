@@ -64,6 +64,7 @@
     <div class="section-block" id="block-cdl">
       <h2>🛒 Casa del Libro <span class="badge badge-real">consulta real</span></h2>
       <p class="section-note" id="cdl-note">Precio y disponibilidad online comunicados ahora mismo por la propia tienda.</p>
+      <p><button id="cdl-show-unfiltered" class="btn-ghost" hidden></button></p>
       <div class="cards" id="cdl-cards"></div>
     </div>
 
@@ -71,6 +72,10 @@
       <h2>🗂️ Catálogo bibliográfico <span class="badge badge-real">consulta real</span></h2>
       <p class="section-note">Fichas de Open Library y Google Books (cuando responde). Datos de referencia: autor, año, editorial e ISBN.</p>
       <div class="cards" id="catalog-cards"></div>
+      <div id="catalog-unconfirmed" class="free-pending" hidden>
+        <p class="section-note sub">Open Library sitúa estas obras en el idioma elegido, pero no se ha podido identificar la edición concreta: <strong>idioma del ejemplar sin confirmar</strong>.</p>
+        <div class="cards" id="unconfirmed-cards"></div>
+      </div>
     </div>
 
     <div class="section-block" id="block-stores">
@@ -107,7 +112,7 @@
   <section id="guia" class="guide">
     <h2>Guía rápida</h2>
     <ol>
-      <li>Escribe un título, autor o ISBN y pulsa <strong>Rastrear</strong>. El selector junto al buscador acota por idioma del libro (por defecto, español): Open Library, Archive.org y Google Books filtran por idioma; Casa del Libro no comunica ese dato, así que ahí los resultados no se filtran.</li>
+      <li>Escribe un título, autor o ISBN y pulsa <strong>Rastrear</strong>. El selector junto al buscador acota por idioma del libro (por defecto, español): Open Library y Archive.org confirman la edición o el ítem en ese idioma por sus metadatos, y Google Books filtra por idioma; Casa del Libro no comunica ese dato, así que con un idioma elegido sus resultados quedan apartados salvo que pulses «ver sin filtrar».</li>
       <li>Revisa primero <strong>Acceso gratuito</strong>: si hay ejemplar digital, el enlace abre su ficha en Archive.org, donde se confirma si se puede leer o tomar en préstamo.</li>
       <li>En <strong>Casa del Libro</strong> verás precio y disponibilidad reales en ese momento.</li>
       <li>En <strong>Otras tiendas</strong>, pulsa una tienda y se abrirá su web con tu búsqueda ya escrita. Comprueba allí precio y estado.</li>
