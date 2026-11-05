@@ -756,10 +756,10 @@ function renderDownloads(se, ws) {
   let html = "";
   (se.items || []).forEach((b) => {
     html += `<div class="card">
-      <div class="card-badges"><span class="badge badge-free">descarga verificada</span></div>
+      <div class="card-badges"><span class="badge badge-free">fichero comprobado</span></div>
       <h3>${esc(b.title)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}</p>
-      <p class="meta">Standard Ebooks · dominio público en EE. UU. (otros países pueden variar) · catálogo en inglés</p>
+      <p class="meta">Standard Ebooks · libre de derechos en EE. UU. según la fuente · España y otros países: sin verificar (detalle en la página del libro)</p>
       <p class="dl-links">
         ${b.epub ? `<a href="${esc(b.epub)}" target="_blank" rel="noopener">EPUB</a>` : ""}
         ${b.azw3 ? `<a href="${esc(b.azw3)}" target="_blank" rel="noopener">Kindle (AZW3)</a>` : ""}
@@ -772,7 +772,7 @@ function renderDownloads(se, ws) {
     html += `<div class="card">
       <div class="card-badges"><span class="badge badge-pending">EPUB generado al abrirlo</span></div>
       <h3>${esc(b.title)}</h3>
-      <p class="meta">Wikisource (${esc(b.wikiLang)}) · texto libre; licencia de cada obra en su página</p>
+      <p class="meta">Wikisource (${esc(b.wikiLang)}) · licencia de cada obra en su página · sin verificar para España</p>
       <p class="dl-links">
         <a href="${esc(b.epub)}" target="_blank" rel="noopener">Descargar EPUB</a>
         <a href="${esc(b.url)}" target="_blank" rel="noopener">Leer / ficha</a>
