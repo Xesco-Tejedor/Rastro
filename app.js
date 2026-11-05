@@ -257,18 +257,30 @@ function cleanName(full) {
 }
 function splitName(full) {
   full = cleanName(full);
-  if (isOrg(full)) return { sur: full, init: "", corp: true };
-  if (!full) return { sur: "", init: "" };
+  if (isOrg(full)) return { sur: full, init: "", given: "", corp: true };
+  if (!full) return { sur: "", init: "", given: "" };
   if (full.includes(",")) { // ya viene "Apellidos, Nombre"
     const [sur, ...rest] = full.split(",");
-    const init = rest.join(" ").trim().split(" ").filter((w) => !PARTICLES.has(normTxt(w))).map((w) => w[0].toUpperCase() + ".").join(" ");
-    return { sur: sur.trim(), init };
+    const given = rest.join(" ").trim();
+    const init = given.split(" ").filter(Boolean).filter((w) => !PARTICLES.has(normTxt(w))).map((w) => w[0].toUpperCase() + ".").join(" ");
+    return { sur: sur.trim(), init, given };
   }
   const w = full.split(" ");
-  const take = w.length >= 3 ? 2 : 1; // heurística: dos apellidos si hay 3+ palabras
+  const isInitTok = (t) => /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]\.?$/.test(t);
+  /* Heurística: un apellido si el penúltimo token es una inicial ("Amy J. Binder" ->
+     Binder, Amy J.); dos apellidos en nombres de 3+ palabras ("Carlos Ruiz Zafón");
+     las partículas quedan dentro del apellido ("Ortega y Gasset", "van Beethoven"). */
+  let take = w.length >= 3 && !isInitTok(w[w.length - 2]) && !PARTICLES.has(normTxt(w[w.length - 2])) ? 2 : 1;
+  while (w.length - take - 1 >= 0) {
+    const prev = normTxt(w[w.length - take - 1]);
+    if (["y", "e", "i"].includes(prev) && w.length - take - 2 >= 0) { take += 2; continue; } // "Ortega y Gasset"
+    if (PARTICLES.has(prev)) { take += 1; continue; } // "van Beethoven", "de la Torre"
+    break;
+  }
   const sur = w.slice(-take).join(" ");
+  const given = w.slice(0, -take).join(" ");
   const init = w.slice(0, -take).filter((x) => !PARTICLES.has(normTxt(x))).map((x) => x[0].toUpperCase() + ".").join(" ");
-  return { sur, init };
+  return { sur, init, given };
 }
 function plainName(full) { // "Apellidos, Nombre" -> "Nombre Apellidos"
   full = cleanName(full);
@@ -286,7 +298,7 @@ function citeAPA7(it) {
   if (!a.length) auth = null;
   else if (a.length <= 20) {
     const parts = a.map((n) => { const p = splitName(n); return `${p.sur}${p.init ? ", " + p.init : ""}`; });
-    auth = parts.length > 1 ? parts.slice(0, -1).join(", ") + ", y " + parts.at(-1) : parts[0];
+    auth = parts.length > 1 ? parts.slice(0, -1).join(", ") + ", & " + parts.at(-1) : parts[0];
   } else {
     const parts = a.map((n) => { const p = splitName(n); return `${p.sur}${p.init ? ", " + p.init : ""}`; });
     auth = parts.slice(0, 19).join(", ") + ", … " + parts.at(-1);
@@ -299,14 +311,14 @@ function citeAPA7(it) {
 }
 
 function citeChicago(it) {
-  // Chicago 17, bibliografia (guia oficial): Apellido, Nombre. Titulo. Editorial, Ano.
+  // Chicago 18, bibliografia (guia oficial CMOS): Apellido, Nombre [primer autor invertido; resto en orden natural]. Titulo. Editorial, Ano.
   const a = it.authors || [];
-  const inv = (n) => { if (isOrg(n)) return n; const p = splitName(n); const g = plainName(n).replace(p.sur, "").trim(); return g ? `${p.sur}, ${g}` : p.sur; };
+  const inv = (n) => { if (isOrg(n)) return n; const p = splitName(n); return p.given ? `${p.sur}, ${p.given}` : p.sur; };
   let auth = "";
   if (a.length === 1) auth = inv(a[0]) + ".";
   else if (a.length > 1) {
     const rest = a.slice(1, a.length > 10 ? 7 : undefined).map((n) => (isOrg(n) ? n : plainName(n)));
-    const restTxt = rest.length > 1 ? rest.slice(0, -1).join(", ") + " y " + rest.at(-1) : rest[0];
+    const restTxt = rest.length > 1 ? rest.slice(0, -1).join(", ") + ", and " + rest.at(-1) : "and " + rest[0];
     auth = `${inv(a[0])}, ${restTxt}${a.length > 10 ? " et al" : ""}.`;
   }
   const pub = it.publisher ? ` ${it.publisher},` : "";
@@ -318,9 +330,9 @@ function citeChicago(it) {
 function citeMLA(it) {
   const a = it.authors || [];
   let auth = "";
-  const inv1 = (n) => { if (isOrg(n)) return n; const p = splitName(n); const g = plainName(n).replace(p.sur, "").trim(); return g ? `${p.sur}, ${g}` : p.sur; };
+  const inv1 = (n) => { if (isOrg(n)) return n; const p = splitName(n); return p.given ? `${p.sur}, ${p.given}` : p.sur; };
   if (a.length === 1) auth = inv1(a[0]) + ".";
-  else if (a.length === 2) auth = `${inv1(a[0])}, y ${isOrg(a[1]) ? a[1] : plainName(a[1])}.`;
+  else if (a.length === 2) auth = `${inv1(a[0])}, and ${isOrg(a[1]) ? a[1] : plainName(a[1])}.`;
   else if (a.length > 2) auth = `${inv1(a[0])}, et al.`;
   const pub = it.publisher ? `${it.publisher}, ` : "";
   const year = it.year ? `${it.year}.` : "s. f.";
