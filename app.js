@@ -199,7 +199,7 @@ function renderCatalog(olBooks, gbBooks, gbError) {
       <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
       ${b.isbn ? `<p class="meta">ISBN ${esc(b.isbn)}</p>` : ""}
     </div>`).join("");
-  box.innerHTML = html || (gbError ? "" : '<p class="empty-note">Open Library no ha devuelto fichas para esta búsqueda.</p>');
+  box.innerHTML = html || '<p class="empty-note">No hay fichas bibliográficas para esta búsqueda en Open Library' + (gbError ? " y Google Books no está disponible ahora." : " y Google Books no ha aportado más fichas.") + '</p>';
   box.querySelectorAll(".card[data-ol]").forEach((c) =>
     c.addEventListener("click", () => openModal(olBooks[+c.dataset.ol])));
   if (gbBooks && gbBooks.length) {
