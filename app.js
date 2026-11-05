@@ -231,8 +231,9 @@ async function queryStandardEbooks(query) {
       azw3: href("application/x-mobipocket-ebook"),
       web: href("application/xhtml+xml"),
     };
-  }).filter((b) => b.epub || b.web);
-  /* Descarga verificada: HEAD real a cada fichero antes de mostrarlo. */
+  }).filter((b) => b.epub || b.web)
+    .filter((b) => matchesQueryLoose(b.title, b.authors.join(", "))); // no presentar como hallazgo algo ajeno
+  /* Descarga verificada: HEAD real a cada fichero antes de mostrarse. */
   const checked = await Promise.all(items.slice(0, 8).map(async (b) => {
     if (!b.epub) return b;
     try {
