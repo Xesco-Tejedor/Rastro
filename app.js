@@ -73,7 +73,22 @@ async function queryCasaDelLibro(query, isbn) {
   const items = (data.catalog && data.catalog.content) || [];
   return items.map((b) => ({
     name: b.name || "Sin título",
-    authors: b.authors ? b.authors.filter((v, i, a) => a.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i) : [],
+    authors: b.authors
+      ? b.authors.filter(
+          (v, i, a) =>
+            a.findIndex(
+              (x) =>
+                x
+                  .normalize("NFD")
+                  .replace(/[\u0300-\u036f]/g, "")
+                  .toLowerCase() ===
+                v
+                  .normalize("NFD")
+                  .replace(/[\u0300-\u036f]/g, "")
+                  .toLowerCase()
+            ) === i
+        )
+      : [],
     price: b.price && typeof b.price.current === "number" ? b.price.current : null,
     previous: b.price && typeof b.price.previous === "number" ? b.price.previous : null,
     availability: b.availability || null,
