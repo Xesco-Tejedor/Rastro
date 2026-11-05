@@ -190,7 +190,7 @@ function addToList(id) {
   list.push({
     id,
     title: item.title || item.name || "Sin título",
-    authors: item.authors || (item.creator ? [item.creator] : []),
+    authors: dedupeNames(item.authors || (item.creator ? [item.creator] : [])),
     year: item.year || null,
     publisher: item.publisher || null,
     isbn: item.isbn || null,
