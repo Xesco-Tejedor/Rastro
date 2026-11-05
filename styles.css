@@ -124,6 +124,8 @@ main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; paddin
 
 .results { display: flex; flex-direction: column; gap: 34px; margin-top: 26px; }
 .results[hidden] { display: none; }
+[hidden] { display: none !important; }
+#cdl-show-unfiltered { margin: 4px 0 12px; }
 .section-block h2 { font-family: "Fraunces", Georgia, serif; font-size: 1.25rem; font-weight: 600; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .section-note { color: var(--text-dim); font-size: 0.85rem; margin: 6px 0 14px; }
 
