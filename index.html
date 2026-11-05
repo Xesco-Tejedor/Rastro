@@ -6,6 +6,9 @@
 <title>Rastro · Rastreador de libros</title>
 <meta name="description" content="Rastro busca un libro en bibliotecas de acceso gratuito y librerías, y te lleva a cada tienda con la búsqueda ya preparada. Solo muestra lo que cada fuente confirma.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -21,6 +24,7 @@
     </div>
   </div>
   <nav>
+    <a href="#lista">Mi lista <span class="count lista-count"></span></a>
     <a href="#guia">Guía</a>
     <a href="#fuentes">Fuentes</a>
   </nav>
@@ -39,8 +43,12 @@
   <section id="results" class="results" hidden>
     <div class="section-block" id="block-free">
       <h2>📖 Acceso gratuito <span class="badge badge-real">consulta real</span></h2>
-      <p class="section-note">Ejemplares digitales localizados en Archive.org / Open Library en el momento de la búsqueda.</p>
+      <p class="section-note">Lectura libre confirmada, o préstamo con cuenta gratuita de Archive.org: la disponibilidad exacta del préstamo (copias o lista de espera) se confirma al abrir la ficha.</p>
       <div class="cards" id="free-cards"></div>
+      <div id="free-pending" class="free-pending" hidden>
+        <p class="section-note sub">También localizados en Archive.org, <strong>acceso por comprobar</strong>: la ficha indica si son de lectura, préstamo o uso restringido.</p>
+        <div class="cards" id="pending-cards"></div>
+      </div>
     </div>
 
     <div class="section-block" id="block-cdl">
@@ -57,19 +65,43 @@
 
     <div class="section-block" id="block-stores">
       <h2>🔎 Otras tiendas <span class="badge badge-link">búsqueda directa</span></h2>
-      <p class="section-note">Estas tiendas no ofrecen consulta automática. Rastro prepara la búsqueda y la abre en su web: <strong>el precio y el stock se comprueban allí</strong>.</p>
+      <p class="section-note">Esta versión no consulta automáticamente estas tiendas. Rastro prepara la búsqueda y la abre en su web: <strong>el precio y el stock se comprueban allí</strong>.</p>
       <div class="store-links" id="store-links"></div>
     </div>
+  </section>
+
+  <section id="lista" class="section-block lista">
+    <h2>📝 Mi lista de referencias <span class="count lista-count"></span></h2>
+    <p class="section-note">Guarda fichas con el botón <strong>＋ Referencia</strong> de cualquier tarjeta y expórtalas en el estilo que elijas. Si a una ficha le falta un dato (autor, año, editorial), se señala y no se inventa.</p>
+    <div class="lista-toolbar">
+      <label for="lista-formato">Estilo de cita
+        <select id="lista-formato">
+          <option value="apa7" selected>APA 7ª ed.</option>
+          <option value="chicago">Chicago 17 (bibliografía)</option>
+          <option value="mla">MLA 9ª ed.</option>
+          <option value="bibtex">BibTeX</option>
+        </select>
+      </label>
+      <div class="lista-actions">
+        <button id="lista-copiar" class="btn-ghost">Copiar lista</button>
+        <button id="lista-descargar" class="btn-ghost">Descargar .txt</button>
+        <button id="lista-vaciar" class="btn-ghost danger">Vaciar</button>
+      </div>
+    </div>
+    <p id="lista-empty" class="empty-note">Tu lista está vacía. Haz una búsqueda y pulsa «＋ Referencia» en las fichas que quieras guardar.</p>
+    <ol id="lista-items" class="ref-list"></ol>
+    <p class="section-note sub">La lista se guarda solo en este navegador (no sale de tu dispositivo). Al exportar, el título va sin cursiva en el texto plano.</p>
   </section>
 
   <section id="guia" class="guide">
     <h2>Guía rápida</h2>
     <ol>
       <li>Escribe un título, autor o ISBN y pulsa <strong>Rastrear</strong>.</li>
-      <li>Revisa primero <strong>Acceso gratuito</strong>: si hay ejemplar digital, el enlace abre Archive.org para leerlo o tomarlo en préstamo.</li>
+      <li>Revisa primero <strong>Acceso gratuito</strong>: si hay ejemplar digital, el enlace abre su ficha en Archive.org, donde se confirma si se puede leer o tomar en préstamo.</li>
       <li>En <strong>Casa del Libro</strong> verás precio y disponibilidad reales en ese momento.</li>
       <li>En <strong>Otras tiendas</strong>, pulsa una tienda y se abrirá su web con tu búsqueda ya escrita. Comprueba allí precio y estado.</li>
       <li>Toca cualquier ficha para ver su detalle con ISBN y enlaces a todas las tiendas.</li>
+      <li>Guarda fichas con <strong>＋ Referencia</strong> y expórtalas desde <strong>Mi lista</strong> en APA 7, Chicago, MLA o BibTeX.</li>
     </ol>
   </section>
 
@@ -79,14 +111,14 @@
       <thead><tr><th>Fuente</th><th>Tipo</th><th>Qué muestra Rastro</th></tr></thead>
       <tbody>
         <tr><td>Open Library</td><td><span class="badge badge-real">consulta real</span></td><td>Ficha bibliográfica y ejemplares digitales disponibles.</td></tr>
-        <tr><td>Archive.org</td><td><span class="badge badge-real">consulta real</span></td><td>Ejemplares de acceso gratuito (lectura o préstamo).</td></tr>
+        <tr><td>Archive.org</td><td><span class="badge badge-real">consulta real</span></td><td>Lectura libre confirmada, o préstamo con cuenta gratuita; la disponibilidad del préstamo se comprueba en la ficha.</td></tr>
         <tr><td>Casa del Libro</td><td><span class="badge badge-real">consulta real</span></td><td>Precio y disponibilidad online en el momento de la búsqueda.</td></tr>
         <tr><td>Google Books</td><td><span class="badge badge-real">consulta real</span></td><td>Fichas y, cuando existe, precio del ebook en Google Play. Si su cuota gratuita está agotada, se indica.</td></tr>
         <tr><td>IberLibro · AbeBooks</td><td><span class="badge badge-link">búsqueda directa</span></td><td>Enlace con la búsqueda preparada. Segunda mano: el estado y precio se ven en la tienda.</td></tr>
         <tr><td>Amazon · La Central · Laie</td><td><span class="badge badge-link">búsqueda directa</span></td><td>Enlace con la búsqueda preparada. Precio y stock se comprueban en la tienda.</td></tr>
       </tbody>
     </table>
-    <p class="honesty">Rastro no inventa datos: cada tarjeta enlaza a la fuente que la respalda, y lo que no se puede comprobar automáticamente se abre como búsqueda, nunca como resultado confirmado.</p>
+    <p class="honesty">Rastro no inventa datos: cada tarjeta enlaza a la fuente que la respalda, y lo que no se puede comprobar automáticamente se abre como búsqueda, nunca como resultado confirmado. Es una web estática sin servidor propio: cada consulta depende de que la fuente la permita (CORS) y de sus cuotas gratuitas. Está organizada en módulos (fuentes, referencias, presentación) para añadir fuentes sin rehacerla; no promete cobertura ilimitada.</p>
   </section>
 </main>
 
