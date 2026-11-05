@@ -84,6 +84,18 @@ main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; paddin
   transition: box-shadow 0.2s, border-color 0.2s;
 }
 #search-input:focus { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.25); }
+#lang-select {
+  flex: 0 1 auto;
+  padding: 14px 12px;
+  font-size: 0.95rem;
+  color: var(--text);
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  outline: none;
+  cursor: pointer;
+}
+#lang-select:focus { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.25); }
 #search-btn {
   padding: 14px 26px;
   font-size: 1rem; font-weight: 700;
