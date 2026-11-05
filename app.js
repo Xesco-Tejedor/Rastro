@@ -193,12 +193,19 @@ async function addToList(id) {
     publisher: item.publisher || null,
     isbn: item.isbn || null,
     url: item.url || item.workUrl || item.link || (item.ia && item.ia[0] ? `https://archive.org/details/${item.ia[0]}` : null),
+    kind: item.kind || "print",
     editionNote: null,
   };
+  if (entry.authors.some(isOrg)) {
+    entry.roleNote = "la fuente lista una entidad como autor: puede ser editora o colaboradora; confirma su rol en la ficha";
+  }
+  if (entry.kind === "ebook") {
+    entry.editionNote = "ejemplar digital: la edición escaneada/publicada se ve en la ficha enlazada";
+  }
   /* Citas a partir de una EDICION identificada: si la ficha viene de Open Library
      (datos a nivel de obra), se resuelve la edición por ISBN. Si no se puede,
      NO se mezclan datos de obra con datos de edición: se usa solo obra y se señala. */
-  if (item.source === "Open Library") {
+  if (item.source === "Open Library" && entry.kind !== "ebook") {
     const isbn = item.isbn || (item.isbns || [])[0] || null;
     if (isbn) {
       try {
@@ -287,7 +294,7 @@ function citeAPA7(it) {
   const year = it.year ? `(${it.year}).` : "(s. f.).";
   const title = `${it.title}.`;
   const pub = it.publisher ? ` ${it.publisher}.` : "";
-  const url = it.url ? ` ${it.url}` : "";
+  const url = it.kind === "ebook" && it.url ? ` ${it.url}` : "";
   return auth ? `${auth} ${year} ${title}${pub}${url}` : `${title} ${year}${pub}${url}`;
 }
 
@@ -304,7 +311,7 @@ function citeChicago(it) {
   }
   const pub = it.publisher ? ` ${it.publisher},` : "";
   const year = it.year ? ` ${it.year}.` : " s. f.";
-  const url = it.url ? ` ${it.url}` : "";
+  const url = it.kind === "ebook" && it.url ? ` ${it.url}` : "";
   return auth ? `${auth} ${it.title}.${pub}${year}${url}` : `${it.title}.${pub}${year}${url}`;
 }
 
@@ -317,7 +324,7 @@ function citeMLA(it) {
   else if (a.length > 2) auth = `${inv1(a[0])}, et al.`;
   const pub = it.publisher ? `${it.publisher}, ` : "";
   const year = it.year ? `${it.year}.` : "s. f.";
-  return `${auth ? auth + " " : ""}${it.title}. ${pub}${year}${it.url ? " " + it.url : ""}`;
+  return `${auth ? auth + " " : ""}${it.title}. ${pub}${year}${it.kind === "ebook" && it.url ? " " + it.url : ""}`;
 }
 
 function citeBibTeX(it) {
@@ -329,14 +336,14 @@ function citeBibTeX(it) {
   if (it.year) lines.push(`  year = {${it.year}},`);
   if (it.publisher) lines.push(`  publisher = {${it.publisher}},`);
   if (it.isbn) lines.push(`  isbn = {${it.isbn}},`);
-  if (it.url) lines.push(`  url = {${it.url}},`);
+  if (it.kind === "ebook" && it.url) lines.push(`  url = {${it.url}},`);
   lines.push(`}`);
   return lines.join("\n");
 }
 
 const FORMATS = {
   apa7: { label: "APA 7ª ed.", fn: citeAPA7 },
-  chicago: { label: "Chicago 17 (bibliografía)", fn: citeChicago },
+  chicago: { label: "Chicago 18ª ed. (bibliografía)", fn: citeChicago },
   mla: { label: "MLA 9ª ed.", fn: citeMLA },
   bibtex: { label: "BibTeX", fn: citeBibTeX },
 };
@@ -360,13 +367,54 @@ function renderList() {
       <div class="ref-text">${i + 1}. ${htmlCite}</div>
       <div class="ref-side">
         ${miss.length ? `<span class="badge badge-pending">sin datos de ${miss.join(", ")}</span>` : ""}
-        ${it.editionNote ? `<span class="badge badge-pending" title="${esc(it.editionNote)}">edición no identificada</span>` : ""}
+        ${it.editionNote ? `<span class="badge badge-pending" title="${esc(it.editionNote)}">${it.kind === "ebook" ? "edición por confirmar en la ficha" : "edición no identificada"}</span>` : ""}
+        ${it.roleNote ? `<span class="badge badge-pending" title="${esc(it.roleNote)}">rol de la entidad por confirmar</span>` : ""}
+        ${it.url ? `<a class="mini-btn" href="${esc(it.url)}" target="_blank" rel="noopener" title="Ver ficha fuente">↗</a>` : ""}
+        <button class="mini-btn" data-edit="${esc(it.id)}" title="Completar o corregir datos">✎</button>
         <button class="mini-btn" data-del="${esc(it.id)}" title="Quitar de la lista">✕</button>
       </div>
     </li>`;
   }).join("");
   box.querySelectorAll("[data-del]").forEach((b) =>
     b.addEventListener("click", () => removeFromList(b.dataset.del)));
+  box.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => toggleEdit(b.dataset.edit)));
+}
+
+/* Edicion manual: la referencia no parece validada solo por estar en un catalogo;
+   quien la usa puede completar o corregir los datos dudosos. */
+function toggleEdit(id) {
+  const list = loadList();
+  const it = list.find((x) => x.id === id);
+  if (!it) return;
+  const li = [...document.querySelectorAll(".ref-item")].find((el) => el.querySelector(`[data-edit="${CSS.escape(id)}"]`));
+  if (!li) return;
+  if (li.querySelector(".ref-edit")) { renderList(); return; }
+  const form = document.createElement("div");
+  form.className = "ref-edit";
+  form.innerHTML = `
+    <label>Autores (separados por ;) <input data-f="authors" value="${esc((it.authors || []).join("; "))}"></label>
+    <label>Título <input data-f="title" value="${esc(it.title)}"></label>
+    <label>Año <input data-f="year" value="${esc(it.year || "")}" placeholder="vacío = s. f."></label>
+    <label>Editorial <input data-f="publisher" value="${esc(it.publisher || "")}"></label>
+    <label>ISBN <input data-f="isbn" value="${esc(it.isbn || "")}"></label>
+    <label>URL <input data-f="url" value="${esc(it.url || "")}"></label>
+    <label class="chk"><input type="checkbox" data-f="kind" ${it.kind === "ebook" ? "checked" : ""}> recurso en línea (la cita incluye la URL)</label>
+    <button class="btn-ghost" data-save>Guardar</button>`;
+  li.appendChild(form);
+  form.querySelector("[data-save]").addEventListener("click", () => {
+    it.authors = form.querySelector('[data-f="authors"]').value.split(";").map((x) => x.trim()).filter(Boolean);
+    it.title = form.querySelector('[data-f="title"]').value.trim() || it.title;
+    it.year = form.querySelector('[data-f="year"]').value.trim() || null;
+    it.publisher = form.querySelector('[data-f="publisher"]').value.trim() || null;
+    it.isbn = form.querySelector('[data-f="isbn"]').value.trim() || null;
+    it.url = form.querySelector('[data-f="url"]').value.trim() || null;
+    it.kind = form.querySelector('[data-f="kind"]').checked ? "ebook" : "print";
+    it.editionNote = null; // quien edita asume la responsabilidad de los datos
+    it.roleNote = it.authors.some(isOrg) ? it.roleNote : null;
+    saveList(list);
+    renderList();
+  });
 }
 
 function exportText() {
@@ -419,7 +467,7 @@ function renderFree(olBooks, iaDocs) {
       <h3>${esc(b.title)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
       <p class="meta">${mode}</p>
-      ${refBtn(b)}
+      ${refBtn({ ...b, kind: "ebook", url: `https://archive.org/details/${b.ia[0]}` })}
     </div>`;
   });
   box.innerHTML = html || '<p class="empty-note">No se ha confirmado acceso gratuito (lectura o préstamo) para esta búsqueda en Open Library / Archive.org.</p>';
@@ -436,7 +484,7 @@ function renderFree(olBooks, iaDocs) {
       <h3>${esc(d.title)}</h3>
       <p class="meta">${esc(d.creator)}${d.year ? " · " + esc(d.year) : ""}</p>
       <p class="meta">Ejemplar localizado en Archive.org · condiciones de acceso en la ficha</p>
-      ${refBtn({ title: d.title, authors: d.creator ? [d.creator] : [], year: d.year, url: d.url })}
+      ${refBtn({ title: d.title, authors: d.creator ? [d.creator] : [], year: d.year, url: d.url, kind: "ebook" })}
     </div>`).join("");
   pendingWrap.hidden = extra.length === 0;
 
@@ -455,7 +503,7 @@ function renderCdl(items) {
         ? `<p class="price">${b.price.toFixed(2).replace(".", ",")} €${b.previous && b.previous > b.price ? `<span class="was">${b.previous.toFixed(2).replace(".", ",")} €</span>` : ""}</p>`
         : '<p class="meta">Precio no comunicado</p>'}
       ${b.availability ? `<p class="avail${/sin stock|agotado|no disponible/i.test(b.availability) ? " out" : ""}">${esc(b.availability)}</p>` : ""}
-      ${refBtn({ title: b.name, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url })}
+      ${refBtn({ title: b.name, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
     </div>`).join("") || '<p class="empty-note">Casa del Libro no ha devuelto resultados para esta búsqueda.</p>';
   box.querySelectorAll(".card[data-cdl]").forEach((c) =>
     c.addEventListener("click", () => {
@@ -487,7 +535,7 @@ function renderCatalog(olBooks, gbBooks, gbError) {
         ${g.publisher ? `<p class="meta">${esc(g.publisher)}</p>` : ""}
         ${g.price ? `<p class="meta">eBook Google Play: ${esc(g.price)}</p>` : ""}
         <p class="meta">Fuente: Google Books</p>
-        ${refBtn(g)}
+        ${refBtn({ ...g, kind: g.price ? "ebook" : "print" })}
       </div>`;
     });
   }
