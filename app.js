@@ -511,7 +511,8 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal"
 
 /* ==================== 5. Orquestación ==================== */
 
-/* Botones "＋ Referencia" (delegado: sirve para tarjetas y modal) */
+/* Botones "＋ Referencia": captura en document para que el clic no llegue
+   a la tarjeta (que abriría modal o tienda). */
 document.addEventListener("click", (e) => {
   const b = e.target.closest(".add-ref");
   if (!b) return;
@@ -520,7 +521,7 @@ document.addEventListener("click", (e) => {
   addToList(b.dataset.ref);
   b.textContent = "✓ En tu lista";
   setTimeout(() => (b.textContent = "＋ Referencia"), 1500);
-});
+}, true);
 
 $("#lista-formato").addEventListener("change", renderList);
 $("#lista-vaciar").addEventListener("click", () => { saveList([]); renderList(); });
