@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rastro · Rastreador de libros</title>
+<meta name="description" content="Rastro busca un libro en bibliotecas de acceso gratuito y librerías, y te lleva a cada tienda con la búsqueda ya preparada. Solo muestra lo que cada fuente confirma.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+
+<header class="site-header">
+  <div class="logo">
+    <span class="logo-mark">R</span>
+    <div>
+      <h1>Rastro</h1>
+      <p class="tagline">Rastreador de libros</p>
+    </div>
+  </div>
+  <nav>
+    <a href="#guia">Guía</a>
+    <a href="#fuentes">Fuentes</a>
+  </nav>
+</header>
+
+<main>
+  <section class="search-hero">
+    <p class="intro">Busca por <strong>título, autor, palabras clave o ISBN</strong>. Rastro consulta en directo las fuentes que permiten consulta real y prepara enlaces de búsqueda para el resto. Nada de precios ni stock inventados: si una fuente no responde, lo verás.</p>
+    <form id="search-form" class="search-box">
+      <input id="search-input" type="search" placeholder="Ej.: Don Quijote de la Mancha · Cervantes · 9788467033481" autocomplete="off">
+      <button type="submit" id="search-btn">Rastrear</button>
+    </form>
+    <div id="status-bar" class="status-bar" aria-live="polite"></div>
+  </section>
+
+  <section id="results" class="results" hidden>
+    <div class="section-block" id="block-free">
+      <h2>📖 Acceso gratuito <span class="badge badge-real">consulta real</span></h2>
+      <p class="section-note">Ejemplares digitales localizados en Archive.org / Open Library en el momento de la búsqueda.</p>
+      <div class="cards" id="free-cards"></div>
+    </div>
+
+    <div class="section-block" id="block-cdl">
+      <h2>🛒 Casa del Libro <span class="badge badge-real">consulta real</span></h2>
+      <p class="section-note">Precio y disponibilidad online comunicados ahora mismo por la propia tienda.</p>
+      <div class="cards" id="cdl-cards"></div>
+    </div>
+
+    <div class="section-block" id="block-catalog">
+      <h2>🗂️ Catálogo bibliográfico <span class="badge badge-real">consulta real</span></h2>
+      <p class="section-note">Fichas de Open Library y Google Books (cuando responde). Datos de referencia: autor, año, editorial e ISBN.</p>
+      <div class="cards" id="catalog-cards"></div>
+    </div>
+
+    <div class="section-block" id="block-stores">
+      <h2>🔎 Otras tiendas <span class="badge badge-link">búsqueda directa</span></h2>
+      <p class="section-note">Estas tiendas no ofrecen consulta automática. Rastro prepara la búsqueda y la abre en su web: <strong>el precio y el stock se comprueban allí</strong>.</p>
+      <div class="store-links" id="store-links"></div>
+    </div>
+  </section>
+
+  <section id="guia" class="guide">
+    <h2>Guía rápida</h2>
+    <ol>
+      <li>Escribe un título, autor o ISBN y pulsa <strong>Rastrear</strong>.</li>
+      <li>Revisa primero <strong>Acceso gratuito</strong>: si hay ejemplar digital, el enlace abre Archive.org para leerlo o tomarlo en préstamo.</li>
+      <li>En <strong>Casa del Libro</strong> verás precio y disponibilidad reales en ese momento.</li>
+      <li>En <strong>Otras tiendas</strong>, pulsa una tienda y se abrirá su web con tu búsqueda ya escrita. Comprueba allí precio y estado.</li>
+      <li>Toca cualquier ficha para ver su detalle con ISBN y enlaces a todas las tiendas.</li>
+    </ol>
+  </section>
+
+  <section id="fuentes" class="sources">
+    <h2>Qué comprueba cada fuente</h2>
+    <table>
+      <thead><tr><th>Fuente</th><th>Tipo</th><th>Qué muestra Rastro</th></tr></thead>
+      <tbody>
+        <tr><td>Open Library</td><td><span class="badge badge-real">consulta real</span></td><td>Ficha bibliográfica y ejemplares digitales disponibles.</td></tr>
+        <tr><td>Archive.org</td><td><span class="badge badge-real">consulta real</span></td><td>Ejemplares de acceso gratuito (lectura o préstamo).</td></tr>
+        <tr><td>Casa del Libro</td><td><span class="badge badge-real">consulta real</span></td><td>Precio y disponibilidad online en el momento de la búsqueda.</td></tr>
+        <tr><td>Google Books</td><td><span class="badge badge-real">consulta real</span></td><td>Fichas y, cuando existe, precio del ebook en Google Play. Si su cuota gratuita está agotada, se indica.</td></tr>
+        <tr><td>IberLibro · AbeBooks</td><td><span class="badge badge-link">búsqueda directa</span></td><td>Enlace con la búsqueda preparada. Segunda mano: el estado y precio se ven en la tienda.</td></tr>
+        <tr><td>Amazon · La Central · Laie</td><td><span class="badge badge-link">búsqueda directa</span></td><td>Enlace con la búsqueda preparada. Precio y stock se comprueban en la tienda.</td></tr>
+      </tbody>
+    </table>
+    <p class="honesty">Rastro no inventa datos: cada tarjeta enlaza a la fuente que la respalda, y lo que no se puede comprobar automáticamente se abre como búsqueda, nunca como resultado confirmado.</p>
+  </section>
+</main>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <button id="modal-close" class="modal-close" aria-label="Cerrar">✕</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<footer>
+  <p>Rastro · demo pública · <a href="https://github.com/Xesco-Tejedor/Rastro">código en GitHub</a></p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
