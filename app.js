@@ -20,7 +20,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 
-const state = { query: "", isbn: null };
+const state = { query: "", isbn: null, lang: "es" };
 
 /* ==================== 1. Utilidades ==================== */
 
@@ -44,6 +44,22 @@ async function fetchJson(url, timeoutMs = 12000) {
     return await res.json();
   } finally { clearTimeout(t); }
 }
+
+/* Selector de idioma de los libros. Codigos por fuente: Open Library usa
+   ISO 639-2 (nivel de OBRA: coincide si alguna edicion existe en ese idioma),
+   Archive.org nombres en ingles, Google Books ISO 639-1 (langRestrict).
+   Casa del Libro no comunica el idioma: sus resultados NO se filtran y se
+   indica en su seccion. "all" = sin filtro en ninguna fuente. */
+const LANGS = {
+  es: { ol: "spa", ia: "Spanish",    gb: "es", label: "español" },
+  ca: { ol: "cat", ia: "Catalan",    gb: "ca", label: "catalán" },
+  en: { ol: "eng", ia: "English",    gb: "en", label: "inglés" },
+  fr: { ol: "fre", ia: "French",     gb: "fr", label: "francés" },
+  de: { ol: "ger", ia: "German",     gb: "de", label: "alemán" },
+  it: { ol: "ita", ia: "Italian",    gb: "it", label: "italiano" },
+  pt: { ol: "por", ia: "Portuguese", gb: "pt", label: "portugués" },
+};
+function activeLang() { return state.lang === "all" ? null : LANGS[state.lang]; }
 
 const STOP_TOKENS = new Set(["de", "del", "la", "el", "los", "las", "un", "una", "y", "en", "con", "por", "para", "the", "of", "and"]);
 
@@ -72,10 +88,12 @@ function dedupeNames(names) {
 /* ==================== 2. Fuentes ==================== */
 
 async function queryOpenLibrary(query, isbn) {
-  const fields = "key,title,author_name,first_publish_year,isbn,ia,ebook_access,has_fulltext,cover_i,publisher";
-  const url = isbn
+  const L = activeLang();
+  const fields = "key,title,author_name,first_publish_year,isbn,ia,ebook_access,has_fulltext,cover_i,publisher,language";
+  let url = isbn
     ? `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}&limit=8&fields=${fields}`
     : `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=12&fields=${fields}`;
+  if (L) url += `&language=${L.ol}`; // nivel de obra: alguna edicion en ese idioma
   const data = await fetchJson(url);
   return (data.docs || []).map((d) => ({
     source: "Open Library",
@@ -90,12 +108,15 @@ async function queryOpenLibrary(query, isbn) {
     ia: d.ia || [],
     ebookAccess: d.ebook_access || "no_ebook",
     hasFulltext: !!d.has_fulltext,
+    languages: d.language || [],
     workUrl: "https://openlibrary.org" + d.key,
   }));
 }
 
 async function queryArchiveOrg(query, isbn) {
-  const q = isbn ? `${isbn} AND mediatype:texts` : `(${query}) AND mediatype:texts`;
+  const L = activeLang();
+  const q = (isbn ? `${isbn} AND mediatype:texts` : `(${query}) AND mediatype:texts`) +
+    (L ? ` AND language:(${L.ia})` : "");
   const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=year&rows=6&output=json`;
   const data = await fetchJson(url);
   return ((data.response && data.response.docs) || []).map((d) => ({
@@ -129,7 +150,8 @@ async function queryCasaDelLibro(query, isbn) {
 
 async function queryGoogleBooks(query, isbn) {
   const q = isbn ? `isbn:${isbn}` : query;
-  const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=8&langRestrict=es`;
+  const L = activeLang();
+  const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=8${L ? "&langRestrict=" + L.gb : ""}`;
   const data = await fetchJson(url);
   return (data.items || []).map((it) => {
     const v = it.volumeInfo || {};
@@ -662,9 +684,15 @@ $("#search-form").addEventListener("submit", async (e) => {
   if (!raw) return;
   state.query = raw;
   state.isbn = detectIsbn(raw);
+  state.lang = $("#lang-select").value;
   $("#results").hidden = false;
   $("#search-btn").disabled = true;
   clearChips();
+  const L = activeLang();
+  setChip("lang", L ? `Idioma: ${L.label}` : "Idioma: todos", L ? "" : "");
+  /* Casa del Libro no comunica el idioma: no fingimos filtrar sus resultados. */
+  $("#cdl-note").textContent = "Precio y disponibilidad online comunicados ahora mismo por la propia tienda." +
+    (L ? " Casa del Libro no indica el idioma de cada libro en su consulta, así que estos resultados no están filtrados por idioma." : "");
   $("#free-cards").innerHTML = "";
   $("#pending-cards").innerHTML = "";
   $("#free-pending").hidden = true;
