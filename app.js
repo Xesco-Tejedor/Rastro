@@ -203,6 +203,77 @@ async function iaAccess(ocaid) {
   return String(md["access-restricted-item"]) === "true" ? "borrowable" : "public";
 }
 
+/* ---------- Descargas gratuitas (derechos claros, consulta real) ---------- */
+
+/* Standard Ebooks: catálogo SOLO en inglés, dominio público en EE. UU.
+   OPDS/Atom con CORS abierto y ficheros estáticos verificables por HEAD. */
+async function queryStandardEbooks(query) {
+  const L = activeLang();
+  if (L && L.gb !== "en") return { items: [], skipped: true };
+  const url = `https://standardebooks.org/feeds/opds/all?query=${encodeURIComponent(query)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const doc = new DOMParser().parseFromString(await res.text(), "application/xml");
+  const items = [...doc.querySelectorAll("entry")].map((e) => {
+    const links = [...e.querySelectorAll("link")];
+    const acq = links.filter((l) => (l.getAttribute("rel") || "").includes("acquisition"));
+    const href = (type, skip) => {
+      const l = acq.find((x) => x.getAttribute("type") === type && !(skip && skip.test(x.getAttribute("href") || "")));
+      return l ? l.getAttribute("href") : null;
+    };
+    const alt = links.find((l) => (l.getAttribute("rel") || "").endsWith("alternate") && (l.getAttribute("type") || "").includes("html"));
+    return {
+      source: "Standard Ebooks",
+      title: (e.querySelector("title") || {}).textContent || "Sin título",
+      authors: [...e.querySelectorAll("author name")].map((a) => a.textContent),
+      url: alt ? alt.getAttribute("href") : null,
+      epub: href("application/epub+zip", /_advanced\.epub/),
+      azw3: href("application/x-mobipocket-ebook"),
+      web: href("application/xhtml+xml"),
+    };
+  }).filter((b) => b.epub || b.web);
+  /* Descarga verificada: HEAD real a cada fichero antes de mostrarlo. */
+  const checked = await Promise.all(items.slice(0, 8).map(async (b) => {
+    if (!b.epub) return b;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
+      const r = await fetch(b.epub, { method: "HEAD", signal: ctrl.signal });
+      clearTimeout(t);
+      return r.ok ? b : { ...b, epub: null };
+    } catch { return { ...b, epub: null }; }
+  }));
+  return { items: checked.filter((b) => b.epub || b.web), skipped: false };
+}
+
+/* Wikisource: texto libre en la edición del idioma elegido (con "todos", la
+   española). El EPUB lo genera al abrirlo la herramienta oficial WS Export;
+   sin CORS en ese servicio, no verificable ítem a ítem: se rotula como
+   "generado al abrirlo" y se excluyen subpáginas (capítulos sueltos). */
+async function queryWikisource(query, isbn) {
+  if (isbn) return []; // Wikisource no indexa por ISBN de forma fiable
+  const L = activeLang();
+  const lg = L ? L.gb : "es";
+  const url = `https://${lg}.wikisource.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srnamespace=0&srlimit=8&format=json&origin=*`;
+  const data = await fetchJson(url);
+  return (((data.query && data.query.search) || []))
+    .map((h) => h.title)
+    .filter((t) => !t.includes("/")) // sin capítulos sueltos
+    .filter((t) => matchesQueryLoose(t, ""))
+    .slice(0, 5)
+    .map((t) => {
+      const page = encodeURIComponent(t.replace(/ /g, "_"));
+      return {
+        source: "Wikisource",
+        title: t,
+        authors: [],
+        url: `https://${lg}.wikisource.org/wiki/${page}`,
+        epub: `https://ws-export.wmcloud.org/?format=epub&lang=${lg}&page=${page}`,
+        wikiLang: lg,
+      };
+    });
+}
+
 /* ---------- Búsqueda directa en tiendas (esta versión no las consulta) ---------- */
 
 function storeLinks(query, isbn) {
@@ -679,6 +750,38 @@ function renderStores() {
     </a>`).join("");
 }
 
+function renderDownloads(se, ws) {
+  const box = $("#dl-cards");
+  let html = "";
+  (se.items || []).forEach((b) => {
+    html += `<div class="card">
+      <div class="card-badges"><span class="badge badge-free">descarga verificada</span></div>
+      <h3>${esc(b.title)}</h3>
+      <p class="meta">${esc(b.authors.join(", "))}</p>
+      <p class="meta">Standard Ebooks · dominio público en EE. UU. (otros países pueden variar) · catálogo en inglés</p>
+      <p class="dl-links">
+        ${b.epub ? `<a href="${esc(b.epub)}" target="_blank" rel="noopener">EPUB</a>` : ""}
+        ${b.azw3 ? `<a href="${esc(b.azw3)}" target="_blank" rel="noopener">Kindle (AZW3)</a>` : ""}
+        ${b.web ? `<a href="${esc(b.web)}" target="_blank" rel="noopener">Leer en la web</a>` : ""}
+      </p>
+      ${refBtn({ title: b.title, authors: b.authors, year: null, publisher: "Standard Ebooks", url: b.url, kind: "ebook" })}
+    </div>`;
+  });
+  ws.forEach((b) => {
+    html += `<div class="card">
+      <div class="card-badges"><span class="badge badge-pending">EPUB generado al abrirlo</span></div>
+      <h3>${esc(b.title)}</h3>
+      <p class="meta">Wikisource (${esc(b.wikiLang)}) · texto libre; licencia de cada obra en su página</p>
+      <p class="dl-links">
+        <a href="${esc(b.epub)}" target="_blank" rel="noopener">Descargar EPUB</a>
+        <a href="${esc(b.url)}" target="_blank" rel="noopener">Leer / ficha</a>
+      </p>
+      ${refBtn({ title: b.title, authors: [], year: null, url: b.url, kind: "ebook" })}
+    </div>`;
+  });
+  box.innerHTML = html || '<p class="empty-note">Sin descargas gratuitas localizadas en Standard Ebooks ni Wikisource para esta búsqueda e idioma.</p>';
+}
+
 /* ---------- Modal ---------- */
 
 function openModal(b) {
@@ -780,6 +883,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   $("#free-cards").innerHTML = "";
   $("#pending-cards").innerHTML = "";
   $("#free-pending").hidden = true;
+  $("#dl-cards").innerHTML = "";
   $("#cdl-cards").innerHTML = "";
   $("#catalog-cards").innerHTML = "";
   renderStores();
@@ -789,6 +893,8 @@ $("#search-form").addEventListener("submit", async (e) => {
   setChip("ia", "Archive.org", "loading");
   setChip("cdl", "Casa del Libro", "loading");
   setChip("gb", "Google Books", "loading");
+  setChip("se", "Standard Ebooks", "loading");
+  setChip("ws", "Wikisource", "loading");
 
   const olP = queryOpenLibrary(raw, state.isbn)
     .then((r) => { setChip("ol", `Open Library: ${r.length} fichas`, "ok"); return r; })
@@ -803,7 +909,14 @@ $("#search-form").addEventListener("submit", async (e) => {
     .then((r) => { setChip("gb", `Google Books: ${r.length} fichas`, "ok"); return { books: r, error: false }; })
     .catch(() => { setChip("gb", "Google Books: no disponible ahora (cuota)", "warn"); return { books: [], error: true }; });
 
-  const [ol, ia, cdl, gb] = await Promise.all([olP, iaP, cdlP, gbP]);
+  const seP = queryStandardEbooks(raw)
+    .then((r) => { setChip("se", r.skipped ? "Standard Ebooks: solo en inglés" : `Standard Ebooks: ${r.items.length} descargas`, r.skipped ? "" : "ok"); return r; })
+    .catch(() => { setChip("se", "Standard Ebooks: sin respuesta", "warn"); return { items: [], skipped: false }; });
+  const wsP = queryWikisource(raw, state.isbn)
+    .then((r) => { setChip("ws", `Wikisource: ${r.length} obras`, "ok"); return r; })
+    .catch(() => { setChip("ws", "Wikisource: sin respuesta", "warn"); return []; });
+
+  const [ol, ia, cdl, gb, se, ws] = await Promise.all([olP, iaP, cdlP, gbP, seP, wsP]);
 
   /* Con idioma elegido: confirmar la EDICIÓN en ese idioma por metadatos.
      Obras sin edición identificada -> bloque separado "sin confirmar".
@@ -826,6 +939,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   }
 
   renderFree(ol, ia, filteredFree, L);
+  renderDownloads(se, ws);
   renderCdl(cdl, L);
   renderCatalog(ol, gb.books, gb.error, editionCards, unconfirmed, L);
   $("#search-btn").disabled = false;
