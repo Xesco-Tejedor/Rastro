@@ -166,7 +166,7 @@ const LIST_KEY = "rastro_lista_v1";
 const REF_REG = {}; // id -> item citables de la búsqueda actual
 
 function refIdFor(item) {
-  return normTxt((item.title || "") + "|" + ((item.authors || [])[0] || "") + "|" + (item.year || ""));
+  return normTxt((item.title || "") + "|" + ((item.authors || [])[0] || "") + "|" + (item.year || "") + "|" + (item.isbn || ""));
 }
 
 function regRef(item) {
@@ -182,12 +182,12 @@ function saveList(list) {
   localStorage.setItem(LIST_KEY, JSON.stringify(list));
 }
 
-function addToList(id) {
+async function addToList(id) {
   const item = REF_REG[id];
   if (!item) return;
   const list = loadList();
   if (list.some((x) => x.id === id)) { renderList(); return; }
-  list.push({
+  const entry = {
     id,
     title: item.title || item.name || "Sin título",
     authors: dedupeNames(item.authors || (item.creator ? [item.creator] : [])),
@@ -195,7 +195,33 @@ function addToList(id) {
     publisher: item.publisher || null,
     isbn: item.isbn || null,
     url: item.url || item.workUrl || item.link || (item.ia && item.ia[0] ? `https://archive.org/details/${item.ia[0]}` : null),
-  });
+    editionNote: null,
+  };
+  /* Citas a partir de una EDICION identificada: si la ficha viene de Open Library
+     (datos a nivel de obra), se resuelve la edición por ISBN. Si no se puede,
+     NO se mezclan datos de obra con datos de edición: se usa solo obra y se señala. */
+  if (item.source === "Open Library") {
+    const isbn = item.isbn || (item.isbns || [])[0] || null;
+    if (isbn) {
+      try {
+        const ed = await fetchJson(`https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`);
+        entry.title = ed.title || entry.title;
+        const m = (ed.publish_date || "").match(/(\d{4})/);
+        entry.year = m ? m[1] : null;
+        entry.publisher = (ed.publishers || [])[0] || null;
+        entry.isbn = isbn;
+        entry.url = "https://openlibrary.org" + ed.key;
+      } catch {
+        entry.editionNote = "edición no identificada (sin ficha para su ISBN): se citan solo datos de la obra (título, autores, primera publicación)";
+        entry.publisher = null;
+        entry.url = item.workUrl || entry.url;
+      }
+    } else {
+      entry.editionNote = "edición no identificada (sin ISBN): se citan solo datos de la obra (título, autores, primera publicación)";
+      entry.publisher = null;
+    }
+  }
+  list.push(entry);
   saveList(list);
   renderList();
 }
@@ -216,11 +242,16 @@ function missingFields(it) {
 
 /* ---- Nombres: "Nombre Apellido1 Apellido2" -> {sur, init} ---- */
 const PARTICLES = new Set(["de", "del", "la", "las", "los", "y", "van", "von", "da", "di"]);
+const ORG_WORDS = new Set(["biblioteca", "ministerio", "editorial", "universidad", "instituto", "fundacion", "consejo", "academia", "gobierno", "junta", "departamento", "servicio", "archivo", "museo", "cineteca", "filmoteca", "agencia", "comision", "parlamento", "ayuntamiento", "diputacion", "sociedad", "asociacion", "colegio"]);
+function isOrg(full) {
+  return normTxt(full).split(/[^a-z0-9]+/).some((w) => ORG_WORDS.has(w));
+}
 function cleanName(full) {
   return (full || "").replace(/\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
 }
 function splitName(full) {
   full = cleanName(full);
+  if (isOrg(full)) return { sur: full, init: "", corp: true };
   if (!full) return { sur: "", init: "" };
   if (full.includes(",")) { // ya viene "Apellidos, Nombre"
     const [sur, ...rest] = full.split(",");
@@ -249,7 +280,7 @@ function citeAPA7(it) {
   if (!a.length) auth = null;
   else if (a.length <= 20) {
     const parts = a.map((n) => { const p = splitName(n); return `${p.sur}${p.init ? ", " + p.init : ""}`; });
-    auth = parts.length > 1 ? parts.slice(0, -1).join(", ") + ", & " + parts.at(-1) : parts[0];
+    auth = parts.length > 1 ? parts.slice(0, -1).join(", ") + ", y " + parts.at(-1) : parts[0];
   } else {
     const parts = a.map((n) => { const p = splitName(n); return `${p.sur}${p.init ? ", " + p.init : ""}`; });
     auth = parts.slice(0, 19).join(", ") + ", … " + parts.at(-1);
@@ -262,31 +293,29 @@ function citeAPA7(it) {
 }
 
 function citeChicago(it) {
-  // Chicago 17, bibliografia: Apellido, Nombre. Ano. Titulo. Editorial.
+  // Chicago 17, bibliografia (guia oficial): Apellido, Nombre. Titulo. Editorial, Ano.
   const a = it.authors || [];
+  const inv = (n) => { if (isOrg(n)) return n; const p = splitName(n); const g = plainName(n).replace(p.sur, "").trim(); return g ? `${p.sur}, ${g}` : p.sur; };
   let auth = "";
-  if (a.length === 1) {
-    const p = splitName(a[0]);
-    const given = plainName(a[0]).replace(p.sur, "").trim();
-    auth = given ? `${p.sur}, ${given}.` : `${p.sur}.`;
-  } else if (a.length > 1) {
-    const p = splitName(a[0]);
-    const given = plainName(a[0]).replace(p.sur, "").trim();
-    const rest = a.slice(1, 4).map(plainName);
-    auth = `${given ? p.sur + ", " + given : p.sur}, y ${rest.join(", ")}${a.length > 4 ? " et al" : ""}.`;
+  if (a.length === 1) auth = inv(a[0]) + ".";
+  else if (a.length > 1) {
+    const rest = a.slice(1, a.length > 10 ? 7 : undefined).map((n) => (isOrg(n) ? n : plainName(n)));
+    const restTxt = rest.length > 1 ? rest.slice(0, -1).join(", ") + " y " + rest.at(-1) : rest[0];
+    auth = `${inv(a[0])}, ${restTxt}${a.length > 10 ? " et al" : ""}.`;
   }
-  const year = it.year ? `${it.year}.` : "s. f.";
-  const pub = it.publisher ? ` ${it.publisher}.` : "";
+  const pub = it.publisher ? ` ${it.publisher},` : "";
+  const year = it.year ? ` ${it.year}.` : " s. f.";
   const url = it.url ? ` ${it.url}` : "";
-  return auth ? `${auth} ${year} ${it.title}.${pub}${url}` : `${it.title}. ${year}${pub}${url}`;
+  return auth ? `${auth} ${it.title}.${pub}${year}${url}` : `${it.title}.${pub}${year}${url}`;
 }
 
 function citeMLA(it) {
   const a = it.authors || [];
   let auth = "";
-  if (a.length === 1) { const p = splitName(a[0]); auth = `${p.sur}, ${plainName(a[0]).replace(p.sur, "").trim()}.`.replace("  ", " "); }
-  else if (a.length === 2) { const p = splitName(a[0]); auth = `${p.sur}, ${plainName(a[0]).replace(p.sur, "").trim()}, y ${plainName(a[1])}.`.replace("  ", " "); }
-  else if (a.length > 2) { const p = splitName(a[0]); auth = `${p.sur}, ${plainName(a[0]).replace(p.sur, "").trim()}, et al.`.replace("  ", " "); }
+  const inv1 = (n) => { if (isOrg(n)) return n; const p = splitName(n); const g = plainName(n).replace(p.sur, "").trim(); return g ? `${p.sur}, ${g}` : p.sur; };
+  if (a.length === 1) auth = inv1(a[0]) + ".";
+  else if (a.length === 2) auth = `${inv1(a[0])}, y ${isOrg(a[1]) ? a[1] : plainName(a[1])}.`;
+  else if (a.length > 2) auth = `${inv1(a[0])}, et al.`;
   const pub = it.publisher ? `${it.publisher}, ` : "";
   const year = it.year ? `${it.year}.` : "s. f.";
   return `${auth ? auth + " " : ""}${it.title}. ${pub}${year}${it.url ? " " + it.url : ""}`;
@@ -332,6 +361,7 @@ function renderList() {
       <div class="ref-text">${i + 1}. ${htmlCite}</div>
       <div class="ref-side">
         ${miss.length ? `<span class="badge badge-pending">sin datos de ${miss.join(", ")}</span>` : ""}
+        ${it.editionNote ? `<span class="badge badge-pending" title="${esc(it.editionNote)}">edición no identificada</span>` : ""}
         <button class="mini-btn" data-del="${esc(it.id)}" title="Quitar de la lista">✕</button>
       </div>
     </li>`;
@@ -513,12 +543,13 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal"
 
 /* Botones "＋ Referencia": captura en document para que el clic no llegue
    a la tarjeta (que abriría modal o tienda). */
-document.addEventListener("click", (e) => {
+document.addEventListener("click", async (e) => {
   const b = e.target.closest(".add-ref");
   if (!b) return;
   e.stopPropagation();
   e.preventDefault();
-  addToList(b.dataset.ref);
+  b.textContent = "…";
+  await addToList(b.dataset.ref);
   b.textContent = "✓ En tu lista";
   setTimeout(() => (b.textContent = "＋ Referencia"), 1500);
 }, true);
@@ -531,6 +562,23 @@ $("#lista-copiar").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText(t); $("#lista-copiar").textContent = "Copiada ✓"; }
   catch { $("#lista-copiar").textContent = "No se pudo copiar"; }
   setTimeout(() => ($("#lista-copiar").textContent = "Copiar lista"), 1500);
+});
+$("#lista-descargar-html").addEventListener("click", () => {
+  const list = sortedList();
+  if (!list.length) return;
+  const fmt = $("#lista-formato").value;
+  const body = list.map((it, i) => {
+    const c = FORMATS[fmt].fn(it);
+    const html = fmt === "bibtex" ? `<pre>${esc(c)}</pre>` : `<p>${i + 1}. ${esc(c).replace(esc(it.title) + ".", `<i>${esc(it.title)}</i>.`)}</p>`;
+    return html;
+  }).join("\n");
+  const doc = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Referencias · Rastro</title><style>body{font-family:Georgia,'Times New Roman',serif;max-width:820px;margin:40px auto;line-height:1.7;color:#111}p{padding-left:2.5em;text-indent:-2.5em}pre{white-space:pre-wrap}</style></head><body><h1>Referencias (${FORMATS[fmt].label})</h1>\n${body}\n</body></html>`;
+  const blob = new Blob([doc], { type: "text/html;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `rastro-referencias-${fmt}.html`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 });
 $("#lista-descargar").addEventListener("click", () => {
   const t = exportText();
