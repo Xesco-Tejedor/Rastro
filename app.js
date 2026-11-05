@@ -343,7 +343,7 @@ function citeBibTeX(it) {
   const keyBase = it.authors && it.authors.length ? normTxt(splitName(it.authors[0]).sur).replace(/[^a-z]/g, "") : normTxt(it.title).split(" ")[0].replace(/[^a-z]/g, "");
   const key = `${keyBase}${it.year || "sf"}`;
   const lines = [`@book{${key},`];
-  if (it.authors && it.authors.length) lines.push(`  author = {${it.authors.map((n) => { const p = splitName(n); return `${p.sur}, ${plainName(n).replace(p.sur, "").trim()}`; }).join(" and ")}},`);
+  if (it.authors && it.authors.length) lines.push(`  author = {${it.authors.map((n) => { const p = splitName(n); return p.given ? `${p.sur}, ${p.given}` : p.sur; }).join(" and ")}},`);
   lines.push(`  title = {${it.title}},`);
   if (it.year) lines.push(`  year = {${it.year}},`);
   if (it.publisher) lines.push(`  publisher = {${it.publisher}},`);
