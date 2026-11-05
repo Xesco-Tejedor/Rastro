@@ -166,7 +166,7 @@ const LIST_KEY = "rastro_lista_v1";
 const REF_REG = {}; // id -> item citables de la búsqueda actual
 
 function refIdFor(item) {
-  return normTxt((item.title || "") + "|" + ((item.authors || [])[0] || "") + "|" + (item.year || "") + "|" + (item.isbn || ""));
+  return normTxt((item.title || "") + "|" + ((item.authors || [])[0] || "") + "|" + (item.year || "") + "|" + (item.isbn || "") + "|" + (item.kind || ""));
 }
 
 function regRef(item) {
