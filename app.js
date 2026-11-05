@@ -1,12 +1,28 @@
-/* Rastro · rastreador de libros
+/* ============================================================================
+ * Rastro · rastreador de libros
  * Principio: solo se muestra lo que cada fuente confirma en el momento.
- * - Consultas reales (JSON, en directo): Open Library, Archive.org, Casa del Libro, Google Books.
- * - Búsqueda directa (enlaces preparados): IberLibro, AbeBooks, Amazon, La Central, Laie.
- */
+ *
+ * Estructura modular (una web estática, sin build, gratis en GitHub Pages):
+ *   1. Utilidades          — helpers puros
+ *   2. Fuentes             — una función queryX() por fuente + storeLinks()
+ *   3. Referencias         — lista persistente + generadores de cita
+ *   4. Render              — pintado de cada sección
+ *   5. Orquestación        — búsqueda y eventos
+ *
+ * Para añadir una fuente nueva: escribe su queryX() en (2), su chip y su
+ * render en (4), y engánchala en la orquestación (5). Sin tocar lo demás.
+ *
+ * Límites reales (ver sección Fuentes de la web): sin backend propio; cada
+ * consulta depende de que la fuente permita CORS y de sus cuotas gratuitas
+ * (Google Books a veces agota la suya). Escalable = añadir fuentes/módulos
+ * sin rehacer la app, no capacidad ilimitada.
+ * ========================================================================== */
 
 const $ = (sel) => document.querySelector(sel);
 
 const state = { query: "", isbn: null };
+
+/* ==================== 1. Utilidades ==================== */
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -29,7 +45,31 @@ async function fetchJson(url, timeoutMs = 12000) {
   } finally { clearTimeout(t); }
 }
 
-/* ---------- Fuentes de consulta real ---------- */
+const STOP_TOKENS = new Set(["de", "del", "la", "el", "los", "las", "un", "una", "y", "en", "con", "por", "para", "the", "of", "and"]);
+
+function normTxt(str) {
+  return (str || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+/* Coincidencia amplia pero honesta: todos los términos significativos en el
+   título, o alguno en el autor. Evita presentar como hallazgo algo ajeno. */
+function matchesQueryLoose(title, creator) {
+  if (state.isbn) return true;
+  const toks = normTxt(state.query).split(/[^a-z0-9áéíóúüñ]+/).filter((t) => t.length >= 3 && !STOP_TOKENS.has(t));
+  if (!toks.length) return true;
+  const t = normTxt(title);
+  const c = normTxt(creator);
+  return toks.every((x) => t.includes(x)) || (c && toks.some((x) => c.includes(x)));
+}
+
+/* Dedupe insensible a mayúsculas y tildes */
+function dedupeNames(names) {
+  return (names || []).filter(
+    (v, i, a) => a.findIndex((x) => normTxt(x) === normTxt(v)) === i
+  );
+}
+
+/* ==================== 2. Fuentes ==================== */
 
 async function queryOpenLibrary(query, isbn) {
   const fields = "key,title,author_name,first_publish_year,isbn,ia,ebook_access,has_fulltext,cover_i,publisher";
@@ -43,6 +83,7 @@ async function queryOpenLibrary(query, isbn) {
     title: d.title || "Sin título",
     authors: d.author_name || [],
     year: d.first_publish_year || null,
+    publisher: (d.publisher || [])[0] || null,
     isbn: (d.isbn || [])[0] || null,
     isbns: d.isbn || [],
     cover: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : null,
@@ -73,22 +114,7 @@ async function queryCasaDelLibro(query, isbn) {
   const items = (data.catalog && data.catalog.content) || [];
   return items.map((b) => ({
     name: b.name || "Sin título",
-    authors: b.authors
-      ? b.authors.filter(
-          (v, i, a) =>
-            a.findIndex(
-              (x) =>
-                x
-                  .normalize("NFD")
-                  .replace(/[\u0300-\u036f]/g, "")
-                  .toLowerCase() ===
-                v
-                  .normalize("NFD")
-                  .replace(/[\u0300-\u036f]/g, "")
-                  .toLowerCase()
-            ) === i
-        )
-      : [],
+    authors: dedupeNames(b.authors),
     price: b.price && typeof b.price.current === "number" ? b.price.current : null,
     previous: b.price && typeof b.price.previous === "number" ? b.price.previous : null,
     availability: b.availability || null,
@@ -121,7 +147,7 @@ async function queryGoogleBooks(query, isbn) {
   });
 }
 
-/* ---------- Búsqueda directa en tiendas ---------- */
+/* ---------- Búsqueda directa en tiendas (esta versión no las consulta) ---------- */
 
 function storeLinks(query, isbn) {
   const term = encodeURIComponent(isbn || query);
@@ -134,7 +160,194 @@ function storeLinks(query, isbn) {
   ];
 }
 
-/* ---------- Render ---------- */
+/* ==================== 3. Referencias (lista persistente) ==================== */
+
+const LIST_KEY = "rastro_lista_v1";
+const REF_REG = {}; // id -> item citables de la búsqueda actual
+
+function refIdFor(item) {
+  return normTxt((item.title || "") + "|" + ((item.authors || [])[0] || "") + "|" + (item.year || ""));
+}
+
+function regRef(item) {
+  const id = refIdFor(item);
+  REF_REG[id] = item;
+  return id;
+}
+
+function loadList() {
+  try { return JSON.parse(localStorage.getItem(LIST_KEY)) || []; } catch { return []; }
+}
+function saveList(list) {
+  localStorage.setItem(LIST_KEY, JSON.stringify(list));
+}
+
+function addToList(id) {
+  const item = REF_REG[id];
+  if (!item) return;
+  const list = loadList();
+  if (list.some((x) => x.id === id)) { renderList(); return; }
+  list.push({
+    id,
+    title: item.title || item.name || "Sin título",
+    authors: item.authors || (item.creator ? [item.creator] : []),
+    year: item.year || null,
+    publisher: item.publisher || null,
+    isbn: item.isbn || null,
+    url: item.url || item.workUrl || item.link || (item.ia && item.ia[0] ? `https://archive.org/details/${item.ia[0]}` : null),
+  });
+  saveList(list);
+  renderList();
+}
+
+function removeFromList(id) {
+  saveList(loadList().filter((x) => x.id !== id));
+  renderList();
+}
+
+/* ---- Datos que faltan: se señalan, nunca se inventan ---- */
+function missingFields(it) {
+  const m = [];
+  if (!it.authors || !it.authors.length) m.push("autor");
+  if (!it.year) m.push("año");
+  if (!it.publisher) m.push("editorial");
+  return m;
+}
+
+/* ---- Nombres: "Nombre Apellido1 Apellido2" -> {sur, init} ---- */
+const PARTICLES = new Set(["de", "del", "la", "las", "los", "y", "van", "von", "da", "di"]);
+function cleanName(full) {
+  return (full || "").replace(/\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
+}
+function splitName(full) {
+  full = cleanName(full);
+  if (!full) return { sur: "", init: "" };
+  if (full.includes(",")) { // ya viene "Apellidos, Nombre"
+    const [sur, ...rest] = full.split(",");
+    const init = rest.join(" ").trim().split(" ").filter((w) => !PARTICLES.has(normTxt(w))).map((w) => w[0].toUpperCase() + ".").join(" ");
+    return { sur: sur.trim(), init };
+  }
+  const w = full.split(" ");
+  const take = w.length >= 3 ? 2 : 1; // heurística: dos apellidos si hay 3+ palabras
+  const sur = w.slice(-take).join(" ");
+  const init = w.slice(0, -take).filter((x) => !PARTICLES.has(normTxt(x))).map((x) => x[0].toUpperCase() + ".").join(" ");
+  return { sur, init };
+}
+function plainName(full) { // "Apellidos, Nombre" -> "Nombre Apellidos"
+  full = cleanName(full);
+  if (full.includes(",")) {
+    const [sur, ...rest] = full.split(",");
+    return (rest.join(" ").trim() + " " + sur.trim()).trim();
+  }
+  return full;
+}
+
+/* ---- Generadores de cita. Título en cursiva solo en HTML; al exportar, texto plano. ---- */
+function citeAPA7(it) {
+  const a = it.authors || [];
+  let auth;
+  if (!a.length) auth = null;
+  else if (a.length <= 20) {
+    const parts = a.map((n) => { const p = splitName(n); return `${p.sur}${p.init ? ", " + p.init : ""}`; });
+    auth = parts.length > 1 ? parts.slice(0, -1).join(", ") + ", & " + parts.at(-1) : parts[0];
+  } else {
+    const parts = a.map((n) => { const p = splitName(n); return `${p.sur}${p.init ? ", " + p.init : ""}`; });
+    auth = parts.slice(0, 19).join(", ") + ", … " + parts.at(-1);
+  }
+  const year = it.year ? `(${it.year}).` : "(s. f.).";
+  const title = `${it.title}.`;
+  const pub = it.publisher ? ` ${it.publisher}.` : "";
+  const url = it.url ? ` ${it.url}` : "";
+  return auth ? `${auth} ${year} ${title}${pub}${url}` : `${title} ${year}${pub}${url}`;
+}
+
+function citeChicago(it) {
+  // Chicago 17, bibliografia: Apellido, Nombre. Ano. Titulo. Editorial.
+  const a = it.authors || [];
+  let auth = "";
+  if (a.length === 1) {
+    const p = splitName(a[0]);
+    const given = plainName(a[0]).replace(p.sur, "").trim();
+    auth = given ? `${p.sur}, ${given}.` : `${p.sur}.`;
+  } else if (a.length > 1) {
+    const p = splitName(a[0]);
+    const given = plainName(a[0]).replace(p.sur, "").trim();
+    const rest = a.slice(1, 4).map(plainName);
+    auth = `${given ? p.sur + ", " + given : p.sur}, y ${rest.join(", ")}${a.length > 4 ? " et al" : ""}.`;
+  }
+  const year = it.year ? `${it.year}.` : "s. f.";
+  const pub = it.publisher ? ` ${it.publisher}.` : "";
+  const url = it.url ? ` ${it.url}` : "";
+  return auth ? `${auth} ${year} ${it.title}.${pub}${url}` : `${it.title}. ${year}${pub}${url}`;
+}
+
+function citeMLA(it) {
+  const a = it.authors || [];
+  let auth = "";
+  if (a.length === 1) { const p = splitName(a[0]); auth = `${p.sur}, ${plainName(a[0]).replace(p.sur, "").trim()}.`.replace("  ", " "); }
+  else if (a.length === 2) { const p = splitName(a[0]); auth = `${p.sur}, ${plainName(a[0]).replace(p.sur, "").trim()}, y ${plainName(a[1])}.`.replace("  ", " "); }
+  else if (a.length > 2) { const p = splitName(a[0]); auth = `${p.sur}, ${plainName(a[0]).replace(p.sur, "").trim()}, et al.`.replace("  ", " "); }
+  const pub = it.publisher ? `${it.publisher}, ` : "";
+  const year = it.year ? `${it.year}.` : "s. f.";
+  return `${auth ? auth + " " : ""}${it.title}. ${pub}${year}${it.url ? " " + it.url : ""}`;
+}
+
+function citeBibTeX(it) {
+  const keyBase = it.authors && it.authors.length ? normTxt(splitName(it.authors[0]).sur).replace(/[^a-z]/g, "") : normTxt(it.title).split(" ")[0].replace(/[^a-z]/g, "");
+  const key = `${keyBase}${it.year || "sf"}`;
+  const lines = [`@book{${key},`];
+  if (it.authors && it.authors.length) lines.push(`  author = {${it.authors.map((n) => { const p = splitName(n); return `${p.sur}, ${plainName(n).replace(p.sur, "").trim()}`; }).join(" and ")}},`);
+  lines.push(`  title = {${it.title}},`);
+  if (it.year) lines.push(`  year = {${it.year}},`);
+  if (it.publisher) lines.push(`  publisher = {${it.publisher}},`);
+  if (it.isbn) lines.push(`  isbn = {${it.isbn}},`);
+  if (it.url) lines.push(`  url = {${it.url}},`);
+  lines.push(`}`);
+  return lines.join("\n");
+}
+
+const FORMATS = {
+  apa7: { label: "APA 7ª ed.", fn: citeAPA7 },
+  chicago: { label: "Chicago 17 (bibliografía)", fn: citeChicago },
+  mla: { label: "MLA 9ª ed.", fn: citeMLA },
+  bibtex: { label: "BibTeX", fn: citeBibTeX },
+};
+
+function sortedList() {
+  return loadList().slice().sort((x, y) =>
+    normTxt((x.authors[0] ? splitName(x.authors[0]).sur : x.title)).localeCompare(normTxt((y.authors[0] ? splitName(y.authors[0]).sur : y.title)), "es"));
+}
+
+function renderList() {
+  const list = sortedList();
+  const fmt = $("#lista-formato").value;
+  const box = $("#lista-items");
+  document.querySelectorAll(".lista-count").forEach((el) => (el.textContent = list.length ? `(${list.length})` : ""));
+  $("#lista-empty").hidden = list.length > 0;
+  box.innerHTML = list.map((it, i) => {
+    const miss = missingFields(it);
+    const cite = FORMATS[fmt].fn(it);
+    const htmlCite = fmt === "bibtex" ? `<pre>${esc(cite)}</pre>` : esc(cite).replace(esc(it.title) + ".", `<i>${esc(it.title)}</i>.`);
+    return `<li class="ref-item">
+      <div class="ref-text">${i + 1}. ${htmlCite}</div>
+      <div class="ref-side">
+        ${miss.length ? `<span class="badge badge-pending">sin datos de ${miss.join(", ")}</span>` : ""}
+        <button class="mini-btn" data-del="${esc(it.id)}" title="Quitar de la lista">✕</button>
+      </div>
+    </li>`;
+  }).join("");
+  box.querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", () => removeFromList(b.dataset.del)));
+}
+
+function exportText() {
+  const fmt = $("#lista-formato").value;
+  const list = sortedList();
+  const sep = fmt === "bibtex" ? "\n\n" : "\n";
+  return list.map((it, i) => fmt === "bibtex" ? FORMATS[fmt].fn(it) : `${i + 1}. ${FORMATS[fmt].fn(it)}`).join(sep);
+}
+
+/* ==================== 4. Render ==================== */
 
 function setChip(id, text, cls) {
   let el = document.getElementById("chip-" + id);
@@ -150,39 +363,55 @@ function setChip(id, text, cls) {
 
 function clearChips() { $("#status-bar").innerHTML = ""; }
 
+function refBtn(item) {
+  return `<button class="add-ref" data-ref="${esc(regRef(item))}" title="Añadir a mi lista de referencias">＋ Referencia</button>`;
+}
+
 function cardBadges(book) {
   const out = [];
   if (book.ia && book.ia.length && (book.ebookAccess === "public")) out.push('<span class="badge badge-free">lectura gratis</span>');
-  else if (book.ia && book.ia.length && book.ebookAccess === "borrowable") out.push('<span class="badge badge-borrow">préstamo gratis</span>');
+  else if (book.ia && book.ia.length && book.ebookAccess === "borrowable") out.push('<span class="badge badge-pending">préstamo: por comprobar</span>');
   return out.join("");
 }
 
 function renderFree(olBooks, iaDocs) {
   const box = $("#free-cards");
+  const pendingBox = $("#pending-cards");
+  const pendingWrap = $("#free-pending");
   const withAccess = olBooks.filter((b) => b.ia && b.ia.length && (b.ebookAccess === "public" || b.ebookAccess === "borrowable"));
   let html = "";
   withAccess.slice(0, 8).forEach((b) => {
-    const mode = b.ebookAccess === "public" ? "Lectura en línea" : "Préstamo con cuenta gratuita";
+    const mode = b.ebookAccess === "public"
+      ? "Lectura en línea · Archive.org"
+      : "Préstamo con cuenta gratuita · disponibilidad por comprobar en la ficha · Archive.org";
     html += `<div class="card" data-ia="${esc(b.ia[0])}">
       ${b.cover ? `<img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
       <div class="card-badges">${cardBadges(b)}</div>
       <h3>${esc(b.title)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
-      <p class="meta">${mode} · Archive.org</p>
+      <p class="meta">${mode}</p>
+      ${refBtn(b)}
     </div>`;
   });
+  box.innerHTML = html || '<p class="empty-note">No se ha confirmado acceso gratuito (lectura o préstamo) para esta búsqueda en Open Library / Archive.org.</p>';
+
+  /* Hallazgos de Archive.org sin disponibilidad confirmada: separados y
+     filtrados para no presentar como hallazgo algo ajeno a la búsqueda. */
   const known = new Set(withAccess.flatMap((b) => b.ia));
-  const extra = iaDocs.filter((d) => !known.has(d.identifier)).slice(0, 6);
-  extra.forEach((d) => {
-    html += `<div class="card" data-ia="${esc(d.identifier)}">
-      <div class="card-badges"><span class="badge badge-free">archive.org</span></div>
+  const extra = iaDocs
+    .filter((d) => !known.has(d.identifier))
+    .filter((d) => matchesQueryLoose(d.title, d.creator))
+    .slice(0, 6);
+  pendingBox.innerHTML = extra.map((d) => `<div class="card" data-ia="${esc(d.identifier)}">
+      <div class="card-badges"><span class="badge badge-pending">por comprobar</span></div>
       <h3>${esc(d.title)}</h3>
       <p class="meta">${esc(d.creator)}${d.year ? " · " + esc(d.year) : ""}</p>
-      <p class="meta">Ejemplar digital localizado en Archive.org</p>
-    </div>`;
-  });
-  box.innerHTML = html || '<p class="empty-note">No se han localizado ejemplares digitales gratuitos para esta búsqueda en Open Library / Archive.org.</p>';
-  box.querySelectorAll(".card[data-ia]").forEach((c) =>
+      <p class="meta">Ejemplar localizado en Archive.org · condiciones de acceso en la ficha</p>
+      ${refBtn({ title: d.title, authors: d.creator ? [d.creator] : [], year: d.year, url: d.url })}
+    </div>`).join("");
+  pendingWrap.hidden = extra.length === 0;
+
+  [...box.querySelectorAll(".card[data-ia]"), ...pendingBox.querySelectorAll(".card[data-ia]")].forEach((c) =>
     c.addEventListener("click", () => window.open(`https://archive.org/details/${c.dataset.ia}`, "_blank", "noopener")));
 }
 
@@ -197,6 +426,7 @@ function renderCdl(items) {
         ? `<p class="price">${b.price.toFixed(2).replace(".", ",")} €${b.previous && b.previous > b.price ? `<span class="was">${b.previous.toFixed(2).replace(".", ",")} €</span>` : ""}</p>`
         : '<p class="meta">Precio no comunicado</p>'}
       ${b.availability ? `<p class="avail${/sin stock|agotado|no disponible/i.test(b.availability) ? " out" : ""}">${esc(b.availability)}</p>` : ""}
+      ${refBtn({ title: b.name, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url })}
     </div>`).join("") || '<p class="empty-note">Casa del Libro no ha devuelto resultados para esta búsqueda.</p>';
   box.querySelectorAll(".card[data-cdl]").forEach((c) =>
     c.addEventListener("click", () => {
@@ -212,29 +442,31 @@ function renderCatalog(olBooks, gbBooks, gbError) {
       ${b.cover ? `<img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
       <h3>${esc(b.title)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
+      ${b.publisher ? `<p class="meta">${esc(b.publisher)}</p>` : ""}
       ${b.isbn ? `<p class="meta">ISBN ${esc(b.isbn)}</p>` : ""}
+      ${refBtn(b)}
     </div>`).join("");
-  box.innerHTML = html || '<p class="empty-note">No hay fichas bibliográficas para esta búsqueda en Open Library' + (gbError ? " y Google Books no está disponible ahora." : " y Google Books no ha aportado más fichas.") + '</p>';
-  box.querySelectorAll(".card[data-ol]").forEach((c) =>
-    c.addEventListener("click", () => openModal(olBooks[+c.dataset.ol])));
   if (gbBooks && gbBooks.length) {
-    // Añade solo fichas de Google Books que no dupliquen título+autor de Open Library
+    // Solo fichas de Google Books que no dupliquen título+autor de Open Library
     const seen = new Set(olBooks.map((b) => (b.title + "|" + b.authors.join(",")).toLowerCase()));
     const extra = gbBooks.filter((g) => !seen.has((g.title + "|" + g.authors.join(",")).toLowerCase())).slice(0, 6);
     extra.forEach((g) => {
-      const div = document.createElement("div");
-      div.className = "card";
-      div.innerHTML = `
+      html += `<div class="card" data-gb>
         ${g.cover ? `<img src="${esc(g.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
         <h3>${esc(g.title)}</h3>
         <p class="meta">${esc(g.authors.join(", "))}${g.year ? " · " + esc(g.year) : ""}</p>
         ${g.publisher ? `<p class="meta">${esc(g.publisher)}</p>` : ""}
         ${g.price ? `<p class="meta">eBook Google Play: ${esc(g.price)}</p>` : ""}
-        <p class="meta">Fuente: Google Books</p>`;
-      if (g.link) div.addEventListener("click", () => window.open(g.link, "_blank", "noopener"));
-      box.appendChild(div);
+        <p class="meta">Fuente: Google Books</p>
+        ${refBtn(g)}
+      </div>`;
     });
   }
+  box.innerHTML = html || `<p class="empty-note">No hay fichas bibliográficas para esta búsqueda en Open Library${gbError ? " y Google Books no está disponible ahora" : ""}.</p>`;
+  box.querySelectorAll(".card[data-ol]").forEach((c) =>
+    c.addEventListener("click", () => openModal(olBooks[+c.dataset.ol])));
+  box.querySelectorAll(".card[data-gb]").forEach((c, i) =>
+    c.addEventListener("click", () => { const l = gbBooks.filter((g) => g.link)[i]; if (l && l.link) window.open(l.link, "_blank", "noopener"); }));
 }
 
 function renderStores() {
@@ -254,7 +486,9 @@ function openModal(b) {
     ${b.cover ? `<img src="${esc(b.cover)}" alt="">` : ""}
     <h3>${esc(b.title)}</h3>
     <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
+    ${b.publisher ? `<p class="meta">${esc(b.publisher)}</p>` : ""}
     ${b.isbn ? `<p class="meta">ISBN ${esc(b.isbn)}</p>` : ""}
+    <p style="margin:10px 0">${refBtn(b)}</p>
     <div class="modal-section">
       <h4>Ver ficha</h4>
       <div class="modal-stores"><a class="store-btn" href="${esc(b.workUrl)}" target="_blank" rel="noopener"><span class="store-name">Open Library</span></a></div>
@@ -275,7 +509,41 @@ $("#modal-close").addEventListener("click", () => ($("#modal").hidden = true));
 $("#modal").addEventListener("click", (e) => { if (e.target === $("#modal")) $("#modal").hidden = true; });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal").hidden = true; });
 
-/* ---------- Orquestación ---------- */
+/* ==================== 5. Orquestación ==================== */
+
+/* Botones "＋ Referencia" (delegado: sirve para tarjetas y modal) */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".add-ref");
+  if (!b) return;
+  e.stopPropagation();
+  e.preventDefault();
+  addToList(b.dataset.ref);
+  b.textContent = "✓ En tu lista";
+  setTimeout(() => (b.textContent = "＋ Referencia"), 1500);
+});
+
+$("#lista-formato").addEventListener("change", renderList);
+$("#lista-vaciar").addEventListener("click", () => { saveList([]); renderList(); });
+$("#lista-copiar").addEventListener("click", async () => {
+  const t = exportText();
+  if (!t) return;
+  try { await navigator.clipboard.writeText(t); $("#lista-copiar").textContent = "Copiada ✓"; }
+  catch { $("#lista-copiar").textContent = "No se pudo copiar"; }
+  setTimeout(() => ($("#lista-copiar").textContent = "Copiar lista"), 1500);
+});
+$("#lista-descargar").addEventListener("click", () => {
+  const t = exportText();
+  if (!t) return;
+  const fmt = $("#lista-formato").value;
+  const blob = new Blob([t + "\n"], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `rastro-referencias-${fmt}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+renderList();
 
 $("#search-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -287,6 +555,8 @@ $("#search-form").addEventListener("submit", async (e) => {
   $("#search-btn").disabled = true;
   clearChips();
   $("#free-cards").innerHTML = "";
+  $("#pending-cards").innerHTML = "";
+  $("#free-pending").hidden = true;
   $("#cdl-cards").innerHTML = "";
   $("#catalog-cards").innerHTML = "";
   renderStores();
