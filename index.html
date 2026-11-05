@@ -35,6 +35,16 @@
     <p class="intro">Busca por <strong>título, autor, palabras clave o ISBN</strong>. Rastro consulta en directo las fuentes que permiten consulta real y prepara enlaces de búsqueda para el resto. Nada de precios ni stock inventados: si una fuente no responde, lo verás.</p>
     <form id="search-form" class="search-box">
       <input id="search-input" type="search" placeholder="Ej.: Don Quijote de la Mancha · Cervantes · 9788467033481" autocomplete="off">
+      <select id="lang-select" aria-label="Idioma de los libros">
+        <option value="es" selected>Español</option>
+        <option value="ca">Catalán</option>
+        <option value="en">Inglés</option>
+        <option value="fr">Francés</option>
+        <option value="de">Alemán</option>
+        <option value="it">Italiano</option>
+        <option value="pt">Portugués</option>
+        <option value="all">Todos los idiomas</option>
+      </select>
       <button type="submit" id="search-btn">Rastrear</button>
     </form>
     <div id="status-bar" class="status-bar" aria-live="polite"></div>
@@ -53,7 +63,7 @@
 
     <div class="section-block" id="block-cdl">
       <h2>🛒 Casa del Libro <span class="badge badge-real">consulta real</span></h2>
-      <p class="section-note">Precio y disponibilidad online comunicados ahora mismo por la propia tienda.</p>
+      <p class="section-note" id="cdl-note">Precio y disponibilidad online comunicados ahora mismo por la propia tienda.</p>
       <div class="cards" id="cdl-cards"></div>
     </div>
 
@@ -97,7 +107,7 @@
   <section id="guia" class="guide">
     <h2>Guía rápida</h2>
     <ol>
-      <li>Escribe un título, autor o ISBN y pulsa <strong>Rastrear</strong>.</li>
+      <li>Escribe un título, autor o ISBN y pulsa <strong>Rastrear</strong>. El selector junto al buscador acota por idioma del libro (por defecto, español): Open Library, Archive.org y Google Books filtran por idioma; Casa del Libro no comunica ese dato, así que ahí los resultados no se filtran.</li>
       <li>Revisa primero <strong>Acceso gratuito</strong>: si hay ejemplar digital, el enlace abre su ficha en Archive.org, donde se confirma si se puede leer o tomar en préstamo.</li>
       <li>En <strong>Casa del Libro</strong> verás precio y disponibilidad reales en ese momento.</li>
       <li>En <strong>Otras tiendas</strong>, pulsa una tienda y se abrirá su web con tu búsqueda ya escrita. Comprueba allí precio y estado.</li>
