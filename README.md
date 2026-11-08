@@ -12,7 +12,7 @@ Busca un libro por título, autor, palabras clave o ISBN y rastrea dónde conseg
 | Archive.org | Ejemplares de acceso gratuito (lectura en línea o préstamo con cuenta gratuita). |
 | Casa del Libro | Precio y disponibilidad online en el momento de la búsqueda (API pública de su catálogo). |
 | Google Books | Fichas y, cuando existe, precio del eBook en Google Play. Si la cuota gratuita está agotada, la app lo indica. |
-| CCUC (Catàleg Col·lectiu de les Universitats de Catalunya) | Registros del catálogo colectivo: universidades catalanas, Biblioteca de Catalunya (registros señalados) y otras bibliotecas del CSUC. Consulta SRU (Alma) directa desde el navegador. La disponibilidad por biblioteca se confirma en la ficha enlazada; por ISBN se busca por el título resuelto. |
+| CCUC (Catàleg Col·lectiu de les Universitats de Catalunya) | Registros del catálogo colectivo: universidades catalanas, Biblioteca de Catalunya y otras bibliotecas del CSUC. Consulta SRU (Alma) directa desde el navegador. La disponibilidad por biblioteca se confirma en la ficha enlazada; por ISBN se busca por el título resuelto. |
 
 ## Búsqueda directa (se abre la tienda con la búsqueda preparada)
 
