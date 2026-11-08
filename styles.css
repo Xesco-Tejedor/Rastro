@@ -333,3 +333,8 @@ a.mini-btn:hover { border-color: var(--amber); }
 .lib-group { margin: 18px 0 6px; }
 .lib-group h3 { font-family: "Fraunces", Georgia, serif; font-size: 1.05rem; font-weight: 600; margin: 0 0 4px; }
 .lib-total { font-family: "Inter", sans-serif; font-size: 0.75rem; font-weight: 500; color: var(--text-dim); margin-left: 6px; }
+
+.chip { cursor: pointer; }
+details.lib-group > summary { cursor: pointer; list-style: none; font-family: "Fraunces", Georgia, serif; font-size: 1.05rem; font-weight: 600; }
+details.lib-group > summary::before { content: "▸ "; color: var(--text-dim); }
+details.lib-group[open] > summary::before { content: "▾ "; }
