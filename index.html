@@ -70,6 +70,7 @@
     <div class="section-block" id="block-cdl">
       <h2>🛒 Casa del Libro <span class="badge badge-real">consulta real</span></h2>
       <p class="section-note" id="cdl-note">Precio y disponibilidad online comunicados ahora mismo por la propia tienda.</p>
+      <p class="section-note sub" id="cdl-rel" hidden>La tienda devuelve estos productos con búsqueda aproximada: la coincidencia no está en el título ni el autor.</p>
       <p><button id="cdl-show-unfiltered" class="btn-ghost" hidden></button></p>
       <div class="cards" id="cdl-cards"></div>
     </div>
@@ -77,7 +78,9 @@
     <div class="section-block" id="block-ccuc">
       <h2>🏛️ Bibliotecas (CCUC) <span class="badge badge-real">consulta real</span></h2>
       <p class="section-note">Universidades catalanas, Biblioteca de Catalunya y CSUC. Biblioteca concreta y disponibilidad, en la ficha enlazada. El idioma no filtra este catálogo.</p>
+      <div id="ccuc-meta"></div>
       <div class="cards" id="ccuc-cards"></div>
+      <div id="ccuc-after"></div>
     </div>
 
     <div class="section-block" id="block-libs">
@@ -174,6 +177,6 @@
   <p>Rastro · demo pública · <a href="https://github.com/Xesco-Tejedor/Rastro">código en GitHub</a></p>
 </footer>
 
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
