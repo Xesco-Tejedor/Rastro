@@ -491,7 +491,10 @@ const LIB_SOURCES = [
     note: "Recoge la producción de Alemania y en alemán desde 1913. La disponibilidad se confirma en la ficha enlazada.",
     searchUrl: (q) => `https://portal.dnb.de/opac.htm?method=simpleSearch&query=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
-      const cql = isbn ? `num=${isbn}` : `title=${clean.replace(/"/g," ")}`;
+      /* Su índice de título hace AND literal de palabras y un artículo inicial
+         ("La") puede anular la coincidencia: se retira solo para esta fuente. */
+      const cleanNoArt = clean.replace(/^(el|la|los|las|un|una|the|der|die|das|ein|le|les|l')\s+/i, "");
+      const cql = isbn ? `num=${isbn}` : `title=${cleanNoArt.replace(/"/g," ")}`;
       const url = "https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = marc21Items(doc, (id) => `https://d-nb.info/${encodeURIComponent(id)}`)
@@ -555,7 +558,10 @@ function renderLibs(results) {
       return `<div class="lib-group"><h3>${esc(r.src.name)}</h3><p class="empty-note">Sin respuesta en este momento; se reintenta en la próxima búsqueda.</p></div>`;
     }
     if (!r.items.length) {
-      return `<div class="lib-group"><h3>${esc(r.src.name)}</h3><p class="empty-note">Sin registros para esta búsqueda.</p></div>`;
+      const nota = r.total > 0
+        ? `El catálogo devuelve ${r.total} registros de coincidencia amplia, pero ninguno coincide claramente con la búsqueda entre los primeros recuperados. <a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial de ${esc(r.src.chip)}</a>`
+        : "Sin registros para esta búsqueda.";
+      return `<div class="lib-group"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
     }
     const cards = r.items.slice(0, 4).map((b, i) => `
       <div class="card" data-lib="${r.src.id}-${i}">
