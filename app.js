@@ -445,20 +445,19 @@ function rankWorkFirst(items, clean) {
 const LIB_SOURCES = [
   {
     id: "bne", chip: "BNE", name: "Biblioteca Nacional de España",
-    note: "Recoge la producción bibliográfica depositada en España (depósito legal); no es un censo de todo lo publicado. La disponibilidad se confirma en la ficha enlazada.",
+    note: "Depósito legal de España; no es un censo de todo lo publicado.",
     searchUrl: (q) => `https://catalogo.bne.es/discovery/search?query=any,contains,${encodeURIComponent(q)}&vid=34BNE_INST:BNE&lang=es`,
     query: async (clean, isbn) => {
       const cql = `alma.all_for_ui all "${clean}"`;
       const url = "https://catalogo.bne.es/view/sru/34BNE_INST?version=1.2&operation=searchRetrieve&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
-      const items = marc21Items(doc, (mms) => `https://catalogo.bne.es/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=34BNE_INST:BNE&lang=es`)
-        .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      const items = marc21Items(doc, (mms) => `https://catalogo.bne.es/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=34BNE_INST:BNE&lang=es`);
       return { total, items: rankWorkFirst(items, clean) };
     },
   },
   {
     id: "loc", chip: "Library of Congress", name: "Library of Congress (EE. UU.)",
-    note: "La mayor biblioteca del mundo; su catálogo es más fuerte en fondos en inglés. La disponibilidad se confirma en la ficha enlazada.",
+    note: "La mayor biblioteca del mundo; más fuerte en fondos en inglés.",
     searchUrl: (q) => `https://www.loc.gov/books/?q=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
       const url = `https://www.loc.gov/books/?fo=json&c=10&q=${encodeURIComponent(isbn || clean)}`;
@@ -470,25 +469,25 @@ const LIB_SOURCES = [
         publisher: null,
         isbn: null,
         url: it.url || null,
-      })).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      }));
       return { total: j.pagination ? j.pagination.total : items.length, items: rankWorkFirst(items, clean) };
     },
   },
   {
     id: "bnf", chip: "BnF", name: "Biblioteca Nacional de Francia (BnF)",
-    note: "Catálogo general de la BnF (Gallica y fondos propios), más fuerte en producción francesa. La disponibilidad se confirma en la ficha enlazada.",
+    note: "Catálogo general francés; más fuerte en producción francesa.",
     searchUrl: (q) => `https://catalogue.bnf.fr/rechercher.do?motRecherche=${encodeURIComponent(q)}&critereRecherche=0`,
     query: async (clean, isbn) => {
       const cql = isbn ? `bib.isbn all "${isbn}"` : `(bib.title all "${clean}" or bib.author all "${clean}")`;
       const url = "https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
-      const items = unimarcItems(doc).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      const items = unimarcItems(doc);
       return { total, items: rankWorkFirst(items, clean) };
     },
   },
   {
     id: "dnb", chip: "DNB", name: "Biblioteca Nacional Alemana (DNB)",
-    note: "Recoge la producción de Alemania y en alemán desde 1913. La disponibilidad se confirma en la ficha enlazada.",
+    note: "Producción de Alemania y en alemán desde 1913.",
     searchUrl: (q) => `https://portal.dnb.de/opac.htm?method=simpleSearch&query=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
       /* Su índice de título hace AND literal de palabras y un artículo inicial
@@ -497,27 +496,25 @@ const LIB_SOURCES = [
       const cql = isbn ? `num=${isbn}` : `title=${cleanNoArt.replace(/"/g," ")}`;
       const url = "https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
-      const items = marc21Items(doc, (id) => `https://d-nb.info/${encodeURIComponent(id)}`)
-        .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      const items = marc21Items(doc, (id) => `https://d-nb.info/${encodeURIComponent(id)}`);
       return { total, items: rankWorkFirst(items, clean) };
     },
   },
   {
     id: "k10", chip: "K10plus", name: "K10plus (catálogo colectivo alemán)",
-    note: "Mayor catálogo colectivo de bibliotecas científicas alemanas (GBV y suroeste). La disponibilidad se confirma en la ficha enlazada.",
+    note: "Mayor catálogo colectivo de bibliotecas científicas alemanas.",
     searchUrl: (q) => `https://kxp.k10plus.de/DB=2.1/CMD?ACT=SRCHA&IKT=1016&TRM=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
       const cql = isbn ? `pica.isb=${isbn}` : `pica.all="${clean}"`;
       const url = "https://sru.k10plus.de/gvk?version=1.1&operation=searchRetrieve&recordSchema=marcxml&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
-      const items = marc21Items(doc, (ppn) => `https://kxp.k10plus.de/DB=2.1/PPNSET?PPN=${encodeURIComponent(ppn)}`)
-        .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      const items = marc21Items(doc, (ppn) => `https://kxp.k10plus.de/DB=2.1/PPNSET?PPN=${encodeURIComponent(ppn)}`);
       return { total, items: rankWorkFirst(items, clean) };
     },
   },
   {
     id: "libris", chip: "LIBRIS", name: "LIBRIS (catálogo colectivo sueco)",
-    note: "Catálogo colectivo de las bibliotecas suecas (Biblioteca Nacional de Suecia). La disponibilidad se confirma en la ficha enlazada.",
+    note: "Catálogo colectivo de las bibliotecas de Suecia.",
     searchUrl: (q) => `https://libris.kb.se/hitlist?q=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
       const url = `https://libris.kb.se/xsearch?format=json&n=10&query=${encodeURIComponent(isbn || clean)}`;
@@ -530,7 +527,7 @@ const LIB_SOURCES = [
         publisher: it.publisher ? String([].concat(it.publisher)[0]).replace(/[.,;:]+$/, "").trim() : null,
         isbn: it.isbn || null,
         url: it.identifier || null,
-      })).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      }));
       return { total: xs.records || items.length, items: rankWorkFirst(items, clean) };
     },
   },
