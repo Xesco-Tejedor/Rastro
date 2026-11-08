@@ -449,7 +449,7 @@ const LIB_SOURCES = [
     searchUrl: (q) => `https://catalogo.bne.es/discovery/search?query=any,contains,${encodeURIComponent(q)}&vid=34BNE_INST:BNE&lang=es`,
     query: async (clean, isbn) => {
       const cql = `alma.all_for_ui all "${clean}"`;
-      const url = "https://catalogo.bne.es/view/sru/34BNE_INST?version=1.2&operation=searchRetrieve&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const url = "https://catalogo.bne.es/view/sru/34BNE_INST?version=1.2&operation=searchRetrieve&maximumRecords=50&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = marc21Items(doc, (mms) => `https://catalogo.bne.es/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=34BNE_INST:BNE&lang=es`);
       return { total, items: rankWorkFirst(items, clean) };
@@ -460,7 +460,7 @@ const LIB_SOURCES = [
     note: "La mayor biblioteca del mundo; más fuerte en fondos en inglés.",
     searchUrl: (q) => `https://www.loc.gov/books/?q=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
-      const url = `https://www.loc.gov/books/?fo=json&c=10&q=${encodeURIComponent(isbn || clean)}`;
+      const url = `https://www.loc.gov/books/?fo=json&c=25&q=${encodeURIComponent(isbn || clean)}`;
       const j = await (await fetch(url)).json();
       const items = (j.results || []).map((it) => ({
         title: it.title || "Sin título",
@@ -479,7 +479,7 @@ const LIB_SOURCES = [
     searchUrl: (q) => `https://catalogue.bnf.fr/rechercher.do?motRecherche=${encodeURIComponent(q)}&critereRecherche=0`,
     query: async (clean, isbn) => {
       const cql = isbn ? `bib.isbn all "${isbn}"` : `(bib.title all "${clean}" or bib.author all "${clean}")`;
-      const url = "https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const url = "https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&maximumRecords=50&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = unimarcItems(doc);
       return { total, items: rankWorkFirst(items, clean) };
@@ -494,7 +494,7 @@ const LIB_SOURCES = [
          ("La") puede anular la coincidencia: se retira solo para esta fuente. */
       const cleanNoArt = clean.replace(/^(el|la|los|las|un|una|the|der|die|das|ein|le|les|l')\s+/i, "");
       const cql = isbn ? `num=${isbn}` : `title=${cleanNoArt.replace(/"/g," ")}`;
-      const url = "https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const url = "https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&maximumRecords=50&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = marc21Items(doc, (id) => `https://d-nb.info/${encodeURIComponent(id)}`);
       return { total, items: rankWorkFirst(items, clean) };
@@ -506,7 +506,7 @@ const LIB_SOURCES = [
     searchUrl: (q) => `https://kxp.k10plus.de/DB=2.1/CMD?ACT=SRCHA&IKT=1016&TRM=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
       const cql = isbn ? `pica.isb=${isbn}` : `pica.all="${clean}"`;
-      const url = "https://sru.k10plus.de/gvk?version=1.1&operation=searchRetrieve&recordSchema=marcxml&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const url = "https://sru.k10plus.de/gvk?version=1.1&operation=searchRetrieve&recordSchema=marcxml&maximumRecords=50&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = marc21Items(doc, (ppn) => `https://kxp.k10plus.de/DB=2.1/PPNSET?PPN=${encodeURIComponent(ppn)}`);
       return { total, items: rankWorkFirst(items, clean) };
@@ -517,7 +517,7 @@ const LIB_SOURCES = [
     note: "Catálogo colectivo de las bibliotecas de Suecia.",
     searchUrl: (q) => `https://libris.kb.se/hitlist?q=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
-      const url = `https://libris.kb.se/xsearch?format=json&n=10&query=${encodeURIComponent(isbn || clean)}`;
+      const url = `https://libris.kb.se/xsearch?format=json&n=25&query=${encodeURIComponent(isbn || clean)}`;
       const j = await (await fetch(url)).json();
       const xs = j.xsearch || {};
       const items = (xs.list || []).map((it) => ({
@@ -560,7 +560,13 @@ function renderLibs(results) {
         : "Sin registros para esta búsqueda.";
       return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
     }
-    const cards = r.items.slice(0, 4).map((b, i) => `
+    const qNorm = normTxt(state.isbn || state.query);
+    const terms = qNorm.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3);
+    const inTitle = (b) => {
+      const hay = normTxt(b.title + " " + b.authors.join(" "));
+      return terms.some((t) => hay.includes(t));
+    };
+    const cardHtml = (b, i) => `
       <div class="card" data-lib="${r.src.id}-${i}">
         <h3>${esc(b.title)}</h3>
         <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + esc(b.year) : ""}</p>
@@ -568,10 +574,28 @@ function renderLibs(results) {
         ${b.isbn ? `<p class="meta">ISBN ${esc(b.isbn)}</p>` : ""}
         <p class="meta">${esc(r.src.chip)} · disponibilidad y biblioteca concreta se confirman en la ficha enlazada</p>
         ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
-      </div>`).join("");
-    const more = r.total > 4 ? `<p class="section-note sub"><a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver ${r.total === 1 ? "el registro" : `los ${r.total} registros`} en la web oficial de ${esc(r.src.chip)}</a></p>` : "";
-    return `<details class="lib-group" id="libgroup-${r.src.id}"><summary>${esc(r.src.name)} <span class="lib-total">${r.total} ${r.total === 1 ? "registro" : "registros"}</span></summary><p class="section-note sub">${esc(r.src.note)}</p><div class="cards">${cards}</div>${more}</details>`;
+      </div>`;
+    const fetched = r.items.length;
+    const first = r.items.slice(0, 4).map(cardHtml).join("");
+    const restHtml = fetched > 4 ? r.items.slice(4).map((b, i) => cardHtml(b, i + 4)).join("") : "";
+    const counts = `<p class="section-note sub" data-count="${r.src.id}">Se muestran ${Math.min(4, fetched)} de ${r.total} ${r.total === 1 ? "registro" : "registros"}.</p>`;
+    const relNote = (!state.isbn && terms.length && !r.items.some(inTitle))
+      ? `<p class="section-note sub">Los términos coinciden en materias o descripción de estos registros, no en el título ni el autor.</p>`
+      : "";
+    const restDiv = fetched > 4 ? `<div class="cards" id="librest-${r.src.id}" hidden>${restHtml}</div>` : "";
+    const moreBtn = fetched > 4 ? `<p><button type="button" class="btn-ghost lib-more" data-more="${r.src.id}">Mostrar ${fetched - 4} más en Rastro</button></p>` : "";
+    const more = r.total > fetched ? `<p class="section-note sub"><a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver los ${r.total} registros en la web oficial de ${esc(r.src.chip)}</a></p>` : "";
+    return `<details class="lib-group" id="libgroup-${r.src.id}"><summary>${esc(r.src.name)} <span class="lib-total">${r.total} ${r.total === 1 ? "registro" : "registros"}</span></summary><p class="section-note sub">${esc(r.src.note)}</p>${counts}${relNote}<div class="cards">${first}</div>${restDiv}${moreBtn}${more}</details>`;
   }).join("");
+  box.querySelectorAll(".lib-more").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const rest = document.getElementById("librest-" + btn.dataset.more);
+      if (rest) rest.hidden = false;
+      const r = results.find((x) => x.src.id === btn.dataset.more);
+      const cnt = box.querySelector(`[data-count="${btn.dataset.more}"]`);
+      if (cnt && r) cnt.textContent = `Se muestran ${r.items.length} de ${r.total} ${r.total === 1 ? "registro" : "registros"}.`;
+      btn.closest("p").remove();
+    }));
   box.querySelectorAll(".card[data-lib]").forEach((c) =>
     c.addEventListener("click", () => {
       const [sid, idx] = c.dataset.lib.split("-");
