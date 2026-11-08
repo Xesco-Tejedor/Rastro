@@ -328,8 +328,7 @@ async function queryCCUC(query) {
       isbn: (df(rec, "020", "a")[0] || "").split(" ")[0] || null,
       url: `https://ccuc.csuc.cat/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=${CCUC_VID}&lang=es`,
     };
-  }).map((b) => ({ ...b, title: b.title.replace(/"{2,}/g, '"') }))
-    .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+  }).map((b) => ({ ...b, title: b.title.replace(/"{2,}/g, '"') }));
   /* El SRU ordena por relevancia de catálogo y suele anteponer artículos
      SOBRE la obra a la propia obra; por eso se piden 30 registros y se
      reordenan aquí: primero los títulos que empiezan por la búsqueda. */
@@ -1113,10 +1112,19 @@ function renderCCUC(res) {
   const fetched = res.items.length;
   const shown = Math.min(8, fetched);
   const counts = `<p class="section-note sub" data-count="ccuc">Se muestran ${shown} de ${res.total} ${res.total === 1 ? "registro" : "registros"}.</p>`;
+  const qNormC = normTxt(state.isbn || state.query);
+  const termsC = qNormC.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3);
+  const inTitleC = (b) => {
+    const hay = normTxt(b.title + " " + b.authors.join(" "));
+    return termsC.some((t) => hay.includes(t));
+  };
+  const relNoteC = (!state.isbn && termsC.length && !res.items.slice(0, 8).some(inTitleC))
+    ? `<p class="section-note sub">Los términos coinciden en materias o descripción de estos registros, no en el título ni el autor.</p>`
+    : "";
   const restDiv = fetched > 8 ? `<div class="cards" id="ccuc-rest" hidden>${res.items.slice(8).map((b, i) => cardHtml(b, i + 8)).join("")}</div>` : "";
   const moreBtn = fetched > 8 ? `<p><button type="button" class="btn-ghost" id="ccuc-more">Mostrar ${fetched - 8} más en Rastro</button></p>` : "";
   const more = res.total > fetched ? `<p class="section-note sub"><a href="${esc(official)}" target="_blank" rel="noopener">Ver los ${res.total} registros en la web oficial del CCUC</a></p>` : "";
-  box.innerHTML = counts + `<div class="cards">${res.items.slice(0, 8).map(cardHtml).join("")}</div>` + restDiv + moreBtn + more;
+  box.innerHTML = counts + relNoteC + `<div class="cards">${res.items.slice(0, 8).map(cardHtml).join("")}</div>` + restDiv + moreBtn + more;
   const moreBtnEl = $("#ccuc-more");
   if (moreBtnEl) moreBtnEl.addEventListener("click", () => {
     $("#ccuc-rest").hidden = false;
