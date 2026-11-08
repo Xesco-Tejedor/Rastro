@@ -302,7 +302,7 @@ const CCUC_ORGS = { "ES-BaCBU": "Biblioteca de Catalunya" };
 async function queryCCUC(query) {
   const clean = query.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
   const cql = `alma.all_for_ui all "${clean}"`;
-  const url = "https://eu04.alma.exlibrisgroup.com/view/sru/34CSUC_NETWORK?version=1.2&operation=searchRetrieve&maximumRecords=8&query=" +
+  const url = "https://eu04.alma.exlibrisgroup.com/view/sru/34CSUC_NETWORK?version=1.2&operation=searchRetrieve&maximumRecords=30&query=" +
     encodeURIComponent(cql);
   const xml = await fetchText(url);
   const doc = new DOMParser().parseFromString(xml, "application/xml");
@@ -334,8 +334,8 @@ async function queryCCUC(query) {
   }).map((b) => ({ ...b, title: b.title.replace(/"{2,}/g, '"') }))
     .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
   /* El SRU ordena por relevancia de catálogo y suele anteponer artículos
-     SOBRE la obra a la propia obra. Reordenación honesta: primero los
-     registros cuyo título empieza por la búsqueda; el resto después. */
+     SOBRE la obra a la propia obra; por eso se piden 30 registros y se
+     reordenan aquí: primero los títulos que empiezan por la búsqueda. */
   const nq = normTxt(clean);
   const head = nq.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3).slice(0, 2).join(" ");
   const rank = (b) => { const t = normTxt(b.title); return t.startsWith(nq) ? 0 : (head && t.startsWith(head) ? 1 : 2); };
