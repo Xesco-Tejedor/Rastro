@@ -328,3 +328,8 @@ footer a { color: var(--amber-soft); }
 .ref-edit .btn-ghost { justify-self: start; }
 a.mini-btn { display: grid; place-items: center; text-decoration: none; color: var(--amber-soft); }
 a.mini-btn:hover { border-color: var(--amber); }
+
+/* Más bibliotecas (grupos por fuente) */
+.lib-group { margin: 18px 0 6px; }
+.lib-group h3 { font-family: "Fraunces", Georgia, serif; font-size: 1.05rem; font-weight: 600; margin: 0 0 4px; }
+.lib-total { font-family: "Inter", sans-serif; font-size: 0.75rem; font-weight: 500; color: var(--text-dim); margin-left: 6px; }
