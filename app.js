@@ -340,6 +340,241 @@ async function queryCCUC(query) {
   return { total, items };
 }
 
+
+/* ---------- Más bibliotecas: España y mundo (consultas reales) ---------- */
+/* Fuentes verificadas una a una desde el propio origen de Rastro (CORS
+   abierto, sin clave ni cuenta). Criterio: bibliotecas nacionales y
+   catálogos colectivos de mayor cobertura con acceso libre y directo.
+   Lo que NO se pudo verificar (WorldCat: clave; British Library, SUDOC,
+   NDL, SBN, Trove: sin API libre consultable) NO se anuncia como cubierto.
+   Ninguna fuente incluye disponibilidad por ejemplar en su respuesta
+   abierta: cada tarjeta enlaza la ficha oficial, donde se confirma. */
+
+/* Parser MARC21 tolerante con espacios de nombres (Alma SRU, DNB, K10plus). */
+function marc21Items(doc, linkFor) {
+  const df = (rec, tag, code) =>
+    [...rec.getElementsByTagNameNS("*", "datafield")]
+      .filter((d) => d.getAttribute("tag") === tag)
+      .flatMap((d) => [...d.getElementsByTagNameNS("*", "subfield")])
+      .filter((s) => s.getAttribute("code") === code)
+      .map((s) => s.textContent.trim());
+  return [...doc.getElementsByTagNameNS("*", "recordData")].map((rd) => {
+    const rec = [...rd.children].find((c) => c.localName === "record");
+    if (!rec) return null;
+    const ctrl = (t) => {
+      const f = [...rec.getElementsByTagNameNS("*", "controlfield")].find((c) => c.getAttribute("tag") === t);
+      return f ? f.textContent.trim() : "";
+    };
+    const ta = (df(rec, "245", "a")[0] || "Sin título").replace(/\s*[/:;]\s*$/, "");
+    const tb = (df(rec, "245", "b")[0] || "").replace(/\s*[/:;]\s*$/, "");
+    const authors = dedupeNames([...df(rec, "100", "a"), ...df(rec, "700", "a")].map((a) => a.replace(/[.,;:\s]+$/, "")));
+    const pub = df(rec, "260", "b")[0] || df(rec, "264", "b")[0] || null;
+    const dateRaw = df(rec, "260", "c")[0] || df(rec, "264", "c")[0] || ctrl("008").slice(7, 11);
+    const y = (dateRaw || "").match(/(\d{4})/);
+    const id = ctrl("001");
+    return {
+      title: tb ? ta + " " + tb : ta,
+      authors,
+      year: y ? y[1] : null,
+      publisher: pub ? pub.replace(/[.,;:]+$/, "").trim() : null,
+      isbn: (df(rec, "020", "a")[0] || "").split(" ")[0] || null,
+      url: id ? linkFor(id) : null,
+    };
+  }).filter(Boolean);
+}
+
+/* Parser UNIMARC (BnF: marcxchange-v2, format="UNIMARC"). */
+function unimarcItems(doc) {
+  const df = (rec, tag, code) =>
+    [...rec.getElementsByTagNameNS("*", "datafield")]
+      .filter((d) => d.getAttribute("tag") === tag)
+      .flatMap((d) => [...d.getElementsByTagNameNS("*", "subfield")])
+      .filter((s) => s.getAttribute("code") === code)
+      .map((s) => s.textContent.trim());
+  return [...doc.getElementsByTagNameNS("*", "recordData")].map((rd) => {
+    const rec = [...rd.children].find((c) => c.localName === "record");
+    if (!rec) return null;
+    const ctrl = (t) => {
+      const f = [...rec.getElementsByTagNameNS("*", "controlfield")].find((c) => c.getAttribute("tag") === t);
+      return f ? f.textContent.trim() : "";
+    };
+    const ta = (df(rec, "200", "a")[0] || "Sin título").replace(/\s*[/:;]\s*$/, "");
+    const te = (df(rec, "200", "e")[0] || "").replace(/\s*[/:;]\s*$/, "");
+    const authors = dedupeNames(
+      [...df(rec, "700", "a"), ...df(rec, "701", "a"), ...df(rec, "702", "a")]
+        .map((a, i, arr) => a.replace(/[.,;:\s]+$/, ""))
+        .map((a) => a));
+    /* Nombre propio UNIMARC va en $b tras el apellido: se añade si existe. */
+    const firsts = [...df(rec, "700", "b"), ...df(rec, "701", "b"), ...df(rec, "702", "b")];
+    const authorsFull = authors.map((a, i) => firsts[i] ? a + ", " + firsts[i].replace(/[.,;:\s]+$/, "") : a);
+    const pub = df(rec, "210", "c")[0] || null;
+    const dateRaw = df(rec, "210", "d")[0] || "";
+    const y = dateRaw.match(/(\d{4})/);
+    const ark = rec.getAttribute("id") || ctrl("003").replace(/^.*(ark:\/\S+).*$/, "$1") || "";
+    return {
+      title: te ? ta + " " + te : ta,
+      authors: authorsFull,
+      year: y ? y[1] : null,
+      publisher: pub ? pub.replace(/[.,;:]+$/, "").trim() : null,
+      isbn: (df(rec, "010", "a")[0] || "").split(" ")[0] || null,
+      url: ark ? "https://catalogue.bnf.fr/" + ark.replace(/^https?:\/\/catalogue\.bnf\.fr\//, "") : null,
+    };
+  }).filter(Boolean);
+}
+
+function sruDoc(xml) {
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  if (doc.getElementsByTagNameNS("*", "diagnostic").length) throw new Error("SRU diagnostic");
+  const nEl = doc.getElementsByTagNameNS("*", "numberOfRecords")[0];
+  return { doc, total: Number(nEl ? nEl.textContent : 0) };
+}
+
+/* Reordenación igual que CCUC: primero los títulos que empiezan por la
+   búsqueda (los SRU ordenan por relevancia de catálogo). */
+function rankWorkFirst(items, clean) {
+  const nq = normTxt(clean);
+  const head = nq.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3).slice(0, 2).join(" ");
+  const rank = (b) => { const t = normTxt(b.title); return t.startsWith(nq) ? 0 : (head && t.startsWith(head) ? 1 : 2); };
+  return items.sort((a, b) => rank(a) - rank(b));
+}
+
+/* Configuración por fuente: nombre, cobertura visible y consulta. */
+const LIB_SOURCES = [
+  {
+    id: "bne", chip: "BNE", name: "Biblioteca Nacional de España",
+    note: "Recoge la producción bibliográfica depositada en España (depósito legal); no es un censo de todo lo publicado. La disponibilidad se confirma en la ficha enlazada.",
+    searchUrl: (q) => `https://catalogo.bne.es/discovery/search?query=any,contains,${encodeURIComponent(q)}&vid=34BNE_INST:BNE&lang=es`,
+    query: async (clean, isbn) => {
+      const cql = `alma.all_for_ui all "${clean}"`;
+      const url = "https://catalogo.bne.es/view/sru/34BNE_INST?version=1.2&operation=searchRetrieve&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const { doc, total } = sruDoc(await fetchText(url));
+      const items = marc21Items(doc, (mms) => `https://catalogo.bne.es/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=34BNE_INST:BNE&lang=es`)
+        .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      return { total, items: rankWorkFirst(items, clean) };
+    },
+  },
+  {
+    id: "loc", chip: "Library of Congress", name: "Library of Congress (EE. UU.)",
+    note: "La mayor biblioteca del mundo; su catálogo es más fuerte en fondos en inglés. La disponibilidad se confirma en la ficha enlazada.",
+    searchUrl: (q) => `https://www.loc.gov/books/?q=${encodeURIComponent(q)}`,
+    query: async (clean, isbn) => {
+      const url = `https://www.loc.gov/books/?fo=json&c=10&q=${encodeURIComponent(isbn || clean)}`;
+      const j = await (await fetch(url)).json();
+      const items = (j.results || []).map((it) => ({
+        title: it.title || "Sin título",
+        authors: (it.contributor || []).map((a) => a.replace(/\b\w/g, (c) => c.toUpperCase())),
+        year: (String(it.date || "").match(/(\d{4})/) || [])[1] || null,
+        publisher: null,
+        isbn: null,
+        url: it.url || null,
+      })).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      return { total: j.pagination ? j.pagination.total : items.length, items: rankWorkFirst(items, clean) };
+    },
+  },
+  {
+    id: "bnf", chip: "BnF", name: "Biblioteca Nacional de Francia (BnF)",
+    note: "Catálogo general de la BnF (Gallica y fondos propios), más fuerte en producción francesa. La disponibilidad se confirma en la ficha enlazada.",
+    searchUrl: (q) => `https://catalogue.bnf.fr/rechercher.do?motRecherche=${encodeURIComponent(q)}&critereRecherche=0`,
+    query: async (clean, isbn) => {
+      const cql = isbn ? `bib.isbn all "${isbn}"` : `bib.any all "${clean}"`;
+      const url = "https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const { doc, total } = sruDoc(await fetchText(url));
+      const items = unimarcItems(doc).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      return { total, items: rankWorkFirst(items, clean) };
+    },
+  },
+  {
+    id: "dnb", chip: "DNB", name: "Biblioteca Nacional Alemana (DNB)",
+    note: "Recoge la producción de Alemania y en alemán desde 1913. La disponibilidad se confirma en la ficha enlazada.",
+    searchUrl: (q) => `https://portal.dnb.de/opac.htm?method=simpleSearch&query=${encodeURIComponent(q)}`,
+    query: async (clean, isbn) => {
+      const cql = isbn ? `num=${isbn}` : `WOE="${clean}"`;
+      const url = "https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const { doc, total } = sruDoc(await fetchText(url));
+      const items = marc21Items(doc, (id) => `https://d-nb.info/${encodeURIComponent(id)}`)
+        .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      return { total, items: rankWorkFirst(items, clean) };
+    },
+  },
+  {
+    id: "k10", chip: "K10plus", name: "K10plus (catálogo colectivo alemán)",
+    note: "Mayor catálogo colectivo de bibliotecas científicas alemanas (GBV y suroeste). La disponibilidad se confirma en la ficha enlazada.",
+    searchUrl: (q) => `https://kxp.k10plus.de/DB=2.1/CMD?ACT=SRCHA&IKT=1016&TRM=${encodeURIComponent(q)}`,
+    query: async (clean, isbn) => {
+      const cql = isbn ? `pica.isb=${isbn}` : `pica.all all "${clean}"`;
+      const url = "https://sru.k10plus.de/gvk?version=1.1&operation=searchRetrieve&recordSchema=marcxml&maximumRecords=20&query=" + encodeURIComponent(cql);
+      const { doc, total } = sruDoc(await fetchText(url));
+      const items = marc21Items(doc, (ppn) => `https://kxp.k10plus.de/DB=2.1/PPNSET?PPN=${encodeURIComponent(ppn)}`)
+        .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      return { total, items: rankWorkFirst(items, clean) };
+    },
+  },
+  {
+    id: "libris", chip: "LIBRIS", name: "LIBRIS (catálogo colectivo sueco)",
+    note: "Catálogo colectivo de las bibliotecas suecas (Biblioteca Nacional de Suecia). La disponibilidad se confirma en la ficha enlazada.",
+    searchUrl: (q) => `https://libris.kb.se/hitlist?q=${encodeURIComponent(q)}`,
+    query: async (clean, isbn) => {
+      const url = `https://libris.kb.se/xsearch?format=json&n=10&query=${encodeURIComponent(isbn || clean)}`;
+      const j = await (await fetch(url)).json();
+      const xs = j.xsearch || {};
+      const items = (xs.list || []).map((it) => ({
+        title: it.title || "Sin título",
+        authors: it.creator ? [it.creator.replace(/[.,;:\s]+$/, "")] : [],
+        year: (String(it.date || "").match(/(\d{4})/) || [])[1] || null,
+        publisher: it.publisher ? it.publisher.replace(/[.,;:]+$/, "").trim() : null,
+        isbn: it.isbn || null,
+        url: it.identifier || null,
+      })).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+      return { total: xs.records || items.length, items: rankWorkFirst(items, clean) };
+    },
+  },
+];
+
+async function queryAllLibs(raw, isbn) {
+  const clean = raw.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
+  return Promise.all(LIB_SOURCES.map(async (s) => {
+    try {
+      const r = await s.query(clean, isbn);
+      setChip(s.id, `${s.chip}: ${r.total} registros`, "ok");
+      return { src: s, total: r.total, items: r.items, error: false };
+    } catch (e) {
+      setChip(s.id, `${s.chip}: sin respuesta`, "warn");
+      return { src: s, total: 0, items: [], error: true };
+    }
+  }));
+}
+
+function renderLibs(results) {
+  const box = $("#libs-groups");
+  if (!results || !results.length) { box.innerHTML = ""; return; }
+  box.innerHTML = results.map((r) => {
+    if (r.error) {
+      return `<div class="lib-group"><h3>${esc(r.src.name)}</h3><p class="empty-note">Sin respuesta en este momento; se reintenta en la próxima búsqueda.</p></div>`;
+    }
+    if (!r.items.length) {
+      return `<div class="lib-group"><h3>${esc(r.src.name)}</h3><p class="empty-note">Sin registros para esta búsqueda.</p></div>`;
+    }
+    const cards = r.items.slice(0, 4).map((b, i) => `
+      <div class="card" data-lib="${r.src.id}-${i}">
+        <h3>${esc(b.title)}</h3>
+        <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + esc(b.year) : ""}</p>
+        ${b.publisher ? `<p class="meta">${esc(b.publisher)}</p>` : ""}
+        ${b.isbn ? `<p class="meta">ISBN ${esc(b.isbn)}</p>` : ""}
+        <p class="meta">${esc(r.src.chip)} · disponibilidad y biblioteca concreta se confirman en la ficha enlazada</p>
+        ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
+      </div>`).join("");
+    const more = r.total > 4 ? `<p class="section-note sub"><a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver los ${r.total} registros en la web oficial de ${esc(r.src.chip)}</a></p>` : "";
+    return `<div class="lib-group"><h3>${esc(r.src.name)} <span class="lib-total">${r.total} registros</span></h3><p class="section-note sub">${esc(r.src.note)}</p><div class="cards">${cards}</div>${more}</div>`;
+  }).join("");
+  box.querySelectorAll(".card[data-lib]").forEach((c) =>
+    c.addEventListener("click", () => {
+      const [sid, idx] = c.dataset.lib.split("-");
+      const r = results.find((x) => x.src.id === sid);
+      const b = r && r.items[+idx];
+      if (b && b.url) window.open(b.url, "_blank", "noopener");
+    }));
+}
+
 /* ---------- Búsqueda directa en tiendas (esta versión no las consulta) ---------- */
 
 function storeLinks(query, isbn) {
@@ -984,6 +1219,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   setChip("se", "Standard Ebooks", "loading");
   setChip("ws", "Wikisource", "loading");
   setChip("ccuc", "CCUC (bibliotecas)", "loading");
+  LIB_SOURCES.forEach((s) => setChip(s.id, s.chip, "loading"));
 
   const olP = queryOpenLibrary(raw, state.isbn)
     .then((r) => { setChip("ol", `Open Library: ${r.length} fichas`, "ok"); return r; })
@@ -1027,7 +1263,8 @@ $("#search-form").addEventListener("submit", async (e) => {
     } catch { setChip("ccuc", "CCUC: sin respuesta", "warn"); return { total: 0, items: [] }; }
   })();
 
-  const [ol, ia, cdl, gb, se, ws, ccuc] = await Promise.all([olP, iaP, cdlP, gbP, seP, wsP, ccucP]);
+  const libsP = queryAllLibs(raw, state.isbn);
+  const [ol, ia, cdl, gb, se, ws, ccuc, libs] = await Promise.all([olP, iaP, cdlP, gbP, seP, wsP, ccucP, libsP]);
 
   /* Con idioma elegido: confirmar la EDICIÓN en ese idioma por metadatos.
      Obras sin edición identificada -> bloque separado "sin confirmar".
@@ -1053,6 +1290,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   renderDownloads(se, ws);
   renderCdl(cdl, L);
   renderCCUC(ccuc);
+  renderLibs(libs);
   renderCatalog(ol, gb.books, gb.error, editionCards, unconfirmed, L);
   $("#search-btn").disabled = false;
 });
