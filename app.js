@@ -45,6 +45,16 @@ async function fetchJson(url, timeoutMs = 12000) {
   } finally { clearTimeout(t); }
 }
 
+async function fetchText(url, timeoutMs = 12000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.text();
+  } finally { clearTimeout(t); }
+}
+
 /* Selector de idioma de los libros. Codigos por fuente: Open Library usa
    ISO 639-2 (nivel de OBRA: coincide si alguna edicion existe en ese idioma),
    Archive.org nombres en ingles, Google Books ISO 639-1 (langRestrict).
@@ -273,6 +283,56 @@ async function queryWikisource(query, isbn) {
         wikiLang: lg,
       };
     });
+}
+
+/* ---------- Bibliotecas: CCUC (consulta real por SRU) ---------- */
+/* Catàleg Col·lectiu de les Universitats de Catalunya: universidades
+   catalanas, Biblioteca de Catalunya y otras bibliotecas del consorcio CSUC
+   (cobertura catalana, no todas las universidades). SRU de Alma con CORS
+   abierto: el navegador consulta directamente, sin proxy ni claves.
+   La zona de red no indexa ISBN (probado: alma.isbn devuelve 0); con una
+   búsqueda por ISBN se consulta por el título resuelto y la ficha lo indica.
+   El SRU no incluye disponibilidad por biblioteca: cada tarjeta enlaza la
+   ficha del CCUC, donde se ven las bibliotecas que lo tienen y su estado. */
+const CCUC_VID = "34CSUC_NETWORK:CSUC_CCUC_UNION";
+/* Catálogos que aportan registros al colectivo, por su código en 035/040.
+   Solo se rotulan los verificados; otros códigos quedan como "CCUC". */
+const CCUC_ORGS = { "ES-BaCBU": "Biblioteca de Catalunya" };
+
+async function queryCCUC(query) {
+  const clean = query.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
+  const cql = `alma.all_for_ui all "${clean}"`;
+  const url = "https://eu04.alma.exlibrisgroup.com/view/sru/34CSUC_NETWORK?version=1.2&operation=searchRetrieve&maximumRecords=8&query=" +
+    encodeURIComponent(cql);
+  const xml = await fetchText(url);
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  if (doc.querySelector("diagnostic")) throw new Error("SRU diagnostic");
+  const total = Number((doc.querySelector("numberOfRecords") || {}).textContent || 0);
+  const df = (rec, tag, code) =>
+    [...rec.querySelectorAll(`datafield[tag="${tag}"] subfield[code="${code}"]`)].map((s) => s.textContent.trim());
+  const items = [...doc.querySelectorAll("recordData > record")].map((rec) => {
+    const ctrl = (t) => ((rec.querySelector(`controlfield[tag="${t}"]`) || {}).textContent || "").trim();
+    const mms = ctrl("001");
+    const ta = (df(rec, "245", "a")[0] || "Sin título").replace(/\s*[/:;]\s*$/, "");
+    const tb = (df(rec, "245", "b")[0] || "").replace(/\s*[/:;]\s*$/, "");
+    const authors = dedupeNames([...df(rec, "100", "a"), ...df(rec, "700", "a")].map((a) => a.replace(/[.,;:\s]+$/, "")));
+    const pub = df(rec, "260", "b")[0] || df(rec, "264", "b")[0] || null;
+    const dateRaw = df(rec, "260", "c")[0] || df(rec, "264", "c")[0] || ctrl("008").slice(7, 11);
+    const y = (dateRaw || "").match(/(\d{4})/);
+    const orgs = [...new Set(df(rec, "035", "a")
+      .map((x) => { const m = x.match(/^\((ES-[A-Za-z0-9]+)\)/); return m ? m[1] : null; })
+      .filter(Boolean))];
+    return {
+      title: tb ? ta + " " + tb : ta,
+      authors,
+      year: y ? y[1] : null,
+      publisher: pub ? pub.replace(/[.,;:]+$/, "").trim() : null,
+      isbn: (df(rec, "020", "a")[0] || "").split(" ")[0] || null,
+      orgs,
+      url: `https://ccuc.csuc.cat/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=${CCUC_VID}&lang=es`,
+    };
+  }).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+  return { total, items };
 }
 
 /* ---------- Búsqueda directa en tiendas (esta versión no las consulta) ---------- */
@@ -742,6 +802,26 @@ function renderCatalog(olBooks, gbBooks, gbError, editionCards, unconfirmed, L) 
     c.addEventListener("click", () => { const l = gbBooks.filter((g) => g.link)[i]; if (l && l.link) window.open(l.link, "_blank", "noopener"); }));
 }
 
+function renderCCUC(res) {
+  const box = $("#ccuc-cards");
+  if (!res || !res.items.length) {
+    box.innerHTML = '<p class="empty-note">El CCUC no ha devuelto registros para esta búsqueda.</p>';
+    return;
+  }
+  box.innerHTML = res.items.slice(0, 8).map((b, i) => `
+    <div class="card" data-ccuc="${i}">
+      <div class="card-badges">${b.orgs.filter((o) => CCUC_ORGS[o]).map((o) => `<span class="badge badge-real">${esc(CCUC_ORGS[o])}</span>`).join("")}</div>
+      <h3>${esc(b.title)}</h3>
+      <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + esc(b.year) : ""}</p>
+      ${b.publisher ? `<p class="meta">${esc(b.publisher)}</p>` : ""}
+      ${b.isbn ? `<p class="meta">ISBN ${esc(b.isbn)}</p>` : ""}
+      <p class="meta">Catálogo colectivo CCUC · las bibliotecas que lo tienen y su disponibilidad se confirman en la ficha enlazada</p>
+      ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
+    </div>`).join("");
+  box.querySelectorAll(".card[data-ccuc]").forEach((c) =>
+    c.addEventListener("click", () => { const b = res.items[+c.dataset.ccuc]; if (b && b.url) window.open(b.url, "_blank", "noopener"); }));
+}
+
 function renderStores() {
   const box = $("#store-links");
   box.innerHTML = storeLinks(state.query, state.isbn).map((s) => `
@@ -887,6 +967,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   $("#dl-cards").innerHTML = "";
   $("#cdl-cards").innerHTML = "";
   $("#catalog-cards").innerHTML = "";
+  $("#ccuc-cards").innerHTML = "";
   renderStores();
   document.getElementById("results").scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -896,6 +977,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   setChip("gb", "Google Books", "loading");
   setChip("se", "Standard Ebooks", "loading");
   setChip("ws", "Wikisource", "loading");
+  setChip("ccuc", "CCUC (bibliotecas)", "loading");
 
   const olP = queryOpenLibrary(raw, state.isbn)
     .then((r) => { setChip("ol", `Open Library: ${r.length} fichas`, "ok"); return r; })
@@ -917,7 +999,23 @@ $("#search-form").addEventListener("submit", async (e) => {
     .then((r) => { setChip("ws", `Wikisource: ${r.length} obras`, "ok"); return r; })
     .catch(() => { setChip("ws", "Wikisource: sin respuesta", "warn"); return []; });
 
-  const [ol, ia, cdl, gb, se, ws] = await Promise.all([olP, iaP, cdlP, gbP, seP, wsP]);
+  /* CCUC no indexa ISBN en su zona de red (probado: alma.isbn devuelve 0).
+     Con un ISBN se busca por el título que Open Library resuelve para ese
+     ISBN, y el chip lo indica: nunca se presenta como búsqueda por ISBN. */
+  const ccucP = (async () => {
+    let q = raw, byTitle = false;
+    if (state.isbn) {
+      const ols = await olP;
+      if (ols && ols[0] && ols[0].title) { q = ols[0].title; byTitle = true; }
+    }
+    try {
+      const r = await queryCCUC(q);
+      setChip("ccuc", `CCUC: ${r.total} registros${byTitle ? " (por título)" : ""}`, "ok");
+      return r;
+    } catch { setChip("ccuc", "CCUC: sin respuesta", "warn"); return { total: 0, items: [] }; }
+  })();
+
+  const [ol, ia, cdl, gb, se, ws, ccuc] = await Promise.all([olP, iaP, cdlP, gbP, seP, wsP, ccucP]);
 
   /* Con idioma elegido: confirmar la EDICIÓN en ese idioma por metadatos.
      Obras sin edición identificada -> bloque separado "sin confirmar".
@@ -942,6 +1040,7 @@ $("#search-form").addEventListener("submit", async (e) => {
   renderFree(ol, ia, filteredFree, L);
   renderDownloads(se, ws);
   renderCdl(cdl, L);
+  renderCCUC(ccuc);
   renderCatalog(ol, gb.books, gb.error, editionCards, unconfirmed, L);
   $("#search-btn").disabled = false;
 });
