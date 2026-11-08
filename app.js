@@ -20,7 +20,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 
-const state = { query: "", isbn: null, lang: "es" };
+const state = { query: "", isbn: null, lang: "es", original: null, variantLabel: null, _variantRun: false };
 
 /* ==================== 1. Utilidades ==================== */
 
@@ -81,6 +81,216 @@ function normTxt(str) {
 function cleanYear(y) {
   const m = String(y == null ? "" : y).match(/(\d{4})/);
   return m && +m[1] ? m[1] : null;
+}
+
+/* ================= Variantes de búsqueda asistidas =================
+   Glosario controlado es->en y sinónimos en español. Cada equivalente
+   en inglés se verificó contra Open Library (8 nov 2026): devuelve
+   obras reales de su tema. No se traduce nada en tiempo de ejecución:
+   solo se sugieren términos de este glosario, materias reales del
+   catálogo de Open Library, o repetir la misma consulta sin filtro de
+   idioma. La consulta original se conserva y la variante activa se
+   muestra siempre, con vuelta a la original. */
+const GLOSS_EN = {
+  joya: "jewelry", joyas: "jewelry", joyeria: "jewellery", alhajas: "jewelry",
+  bisuteria: "costume jewelry",
+  victoriano: "Victorian", victoriana: "Victorian",
+  eduardiano: "Edwardian", eduardiana: "Edwardian",
+  isabelino: "Elizabethan", isabelina: "Elizabethan",
+  georgiano: "Georgian", georgiana: "Georgian",
+  modernismo: "Art Nouveau", deco: "Art Deco",
+  medieval: "medieval", renacimiento: "Renaissance",
+  barroco: "Baroque", barroca: "Baroque",
+  gotico: "Gothic", gotica: "Gothic",
+  romanico: "Romanesque", romanica: "Romanesque",
+  xix: "19th century", xx: "20th century", xviii: "18th century",
+  mueble: "antique furniture", muebles: "antique furniture", mobiliario: "antique furniture",
+  silla: "chairs", sillas: "chairs",
+  lampara: "lamps", lamparas: "lamps",
+  espejo: "mirrors", espejos: "mirrors",
+  ceramica: "ceramics", porcelana: "porcelain",
+  plata: "silver", plateria: "silver", oro: "gold",
+  vidrio: "glassware", cristal: "glassware",
+  marfil: "ivory", bronce: "bronze",
+  reloj: "antique clocks", relojes: "antique clocks",
+  grabado: "engravings", grabados: "engravings", estampa: "engravings", estampas: "engravings",
+  litografia: "lithography",
+  tapiz: "tapestries", tapices: "tapestries",
+  moneda: "coins", monedas: "coins", numismatica: "numismatics",
+  sello: "postage stamps", sellos: "postage stamps", estampillas: "postage stamps", filatelia: "philately",
+  mapa: "antique maps", mapas: "antique maps", cartografia: "cartography",
+  incunable: "incunabula", incunables: "incunabula",
+  manuscrito: "manuscripts", manuscritos: "manuscripts",
+  encuadernacion: "bookbinding", libris: "bookplates",
+  tipografia: "typography", caligrafia: "calligraphy",
+  moda: "fashion history", trajes: "costume history",
+  encaje: "lace", encajes: "lace", bordado: "embroidery",
+  juguete: "antique toys", juguetes: "antique toys",
+  muneca: "dolls", munecas: "dolls",
+  medalla: "medals", medallas: "medals",
+  camafeo: "cameos", camafeos: "cameos",
+  abalorio: "beads", abalorios: "beads",
+  esmalte: "enamel", esmaltes: "enamel",
+  espada: "swords", espadas: "swords", armas: "arms armour",
+  antiguedades: "antiques", antiguo: "antique", antigua: "antique",
+  siglo: "century",
+  postal: "postcards", postales: "postcards",
+  cartel: "posters", carteles: "posters",
+  fotografia: "photography",
+  pelo: "hair",
+};
+/* Valores que funcionan como adjetivo: se anteponen al sustantivo al
+   componer la variante (joyas victorianas -> "Victorian jewelry"). */
+const ADJ_EN = new Set([
+  "Victorian", "Edwardian", "Elizabethan", "Georgian", "medieval", "Renaissance",
+  "Baroque", "Gothic", "Romanesque", "antique", "costume", "Art", "19th", "20th", "18th",
+  "hair", "fashion", "postage", "fountain",
+]);
+const GLOSS_SYN = {
+  joyas: ["joyería", "alhajas"], joyeria: ["joyas", "alhajas"], alhajas: ["joyas"],
+  muebles: ["mobiliario"], mobiliario: ["muebles"],
+  grabados: ["estampas"], estampas: ["grabados"],
+  monedas: ["numismática"], numismatica: ["monedas"],
+  sellos: ["filatelia"], filatelia: ["sellos"], estampillas: ["sellos"],
+  mapas: ["cartografía"], cartografia: ["mapas antiguos"],
+  antiguo: ["antigüedades"], antiguedades: ["antigüedades"],
+};
+
+function sigTokens(raw) {
+  return normTxt(raw).split(/[^a-z0-9áéíóúüñ]+/).filter((t) => t.length >= 3 && !STOP_TOKENS.has(t));
+}
+
+/* Variante en inglés solo si TODOS los términos significativos tienen
+   equivalente en el glosario; si falta alguno, no se compone una
+   consulta mezcla que cambiaría el sentido. */
+const STYLE_EN = new Set([
+  "Victorian", "Edwardian", "Elizabethan", "Georgian", "medieval", "Renaissance",
+  "Baroque", "Gothic", "Romanesque", "Art Nouveau", "Art Deco", "19th century", "20th century", "18th century",
+]);
+function glossEn(t) {
+  /* Singular flexible: victorianas -> victoriana, joyas -> joya. */
+  return GLOSS_EN[t] || GLOSS_EN[t.replace(/as$/, "a")] || GLOSS_EN[t.replace(/s$/, "")] || null;
+}
+function englishVariant(raw) {
+  const toks = sigTokens(raw);
+  if (!toks.length) return null;
+  let parts = toks.map(glossEn);
+  if (parts.some((p) => !p)) return null;
+  /* «siglo XIX» ya queda en "19th century": se retira el "century" suelto,
+     y cualquier término simple ya contenido en otro compuesto
+     (mapas antiguos -> "antique maps", no "antique maps antique"). */
+  if (parts.some((p) => /^\d{2}th century$/.test(p))) parts = parts.filter((p) => p !== "century");
+  parts = parts.filter((p, i) =>
+    p.includes(" ") || !parts.some((q, j) => j !== i && q.includes(" ") && q.split(" ").includes(p)));
+  const style = [], adj = [], noun = [];
+  parts.forEach((p) => (STYLE_EN.has(p) ? style : ADJ_EN.has(p.split(" ")[0]) ? adj : noun).push(p));
+  const v = [...style, ...adj, ...noun].join(" ");
+  return v && normTxt(v) !== normTxt(raw) ? v : null;
+}
+
+function applySynonym(raw, token, syn) {
+  const escT = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp("\\b" + escT + "\\b", "i");
+  if (!re.test(raw)) return null;
+  let out = raw.replace(re, syn);
+  /* Concordancia mínima: variante singular + adjetivo plural femenino
+     (joyas victorianas -> joyería victoriana). */
+  if (!/s$/.test(syn)) {
+    out = out.replace(new RegExp("(" + syn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s+\\w*?)as\\b", "i"), "$1a");
+  }
+  return out;
+}
+
+/* Materias reales del catálogo de Open Library relacionadas con la
+   consulta (o con alguno de sus términos si la consulta entera no da). */
+async function subjectVariants(raw, limit = 2) {
+  const out = [];
+  const seen = new Set([normTxt(raw)]);
+  const tryQ = async (q) => {
+    try {
+      const d = await fetchJson(`https://openlibrary.org/search/subjects.json?q=${encodeURIComponent(q)}`);
+      for (const doc of (d.docs || [])) {
+        if (out.length >= limit) break;
+        const name = (doc.name || "").trim();
+        if (!name || (doc.work_count || 0) < 3) continue;
+        const n = normTxt(name);
+        if (seen.has(n)) continue;
+        seen.add(n);
+        out.push(name);
+      }
+    } catch { /* sin sugerencias de materias */ }
+  };
+  await tryQ(raw);
+  if (!out.length) {
+    for (const t of sigTokens(raw)) {
+      if (out.length >= limit) break;
+      await tryQ(t);
+    }
+  }
+  return out;
+}
+
+function runVariant(v) {
+  if (!state.original) state.original = { query: state.query, lang: state.lang };
+  state.variantLabel = v.label;
+  $("#search-input").value = v.text;
+  if (v.lang) $("#lang-select").value = v.lang;
+  state._variantRun = true;
+  $("#search-form").requestSubmit();
+}
+
+async function updateVariantsBlock(totalHits) {
+  const block = $("#block-variants"), chips = $("#variant-chips"), note = $("#variants-note");
+  if (!block) return;
+  const raw = state.query, L = activeLang();
+  const scarce = totalHits <= 2 && !state.isbn;
+  if (!state.original && !scarce) { block.hidden = true; return; }
+  block.hidden = false;
+  const items = [];
+  const seen = new Set([normTxt(raw)]);
+  if (state.original && normTxt(state.original.query) !== normTxt(raw)) seen.add(normTxt(state.original.query));
+  const en = englishVariant(raw);
+  if (en && !seen.has(normTxt(en))) {
+    seen.add(normTxt(en));
+    items.push({ text: en, label: "en inglés · todos los idiomas", lang: "all" });
+  }
+  for (const t of sigTokens(raw)) {
+    for (const syn of (GLOSS_SYN[t] || [])) {
+      const v = applySynonym(raw, t, syn);
+      if (v && !seen.has(normTxt(v))) { seen.add(normTxt(v)); items.push({ text: v, label: "sinónimo" }); }
+      if (items.length >= 3) break;
+    }
+    if (items.length >= 3) break;
+  }
+  const subs = await subjectVariants(raw);
+  subs.forEach((nm) => {
+    if (!seen.has(normTxt(nm))) { seen.add(normTxt(nm)); items.push({ text: nm, label: "materia de Open Library" }); }
+  });
+  if (L) items.push({ text: raw, label: "la misma consulta sin filtro de idioma", lang: "all" });
+  const top = items.slice(0, 5);
+  if (state.original) {
+    const o = state.original;
+    const langDiff = o.lang !== state.lang ? `, con idioma ${o.lang === "all" ? "todos" : LANGS[o.lang].label}` : "";
+    note.innerHTML = `Mostrando la variante <strong>«${esc(raw)}»</strong>${state.variantLabel ? ` (${esc(state.variantLabel)})` : ""}. ` +
+      `Tu búsqueda original: <strong>«${esc(o.query)}»</strong>${langDiff}. ` +
+      `<button type="button" class="btn-ghost" id="variant-back">Volver a la búsqueda original</button>`;
+    const back = $("#variant-back");
+    if (back) back.addEventListener("click", () => {
+      state.original = null; state.variantLabel = null;
+      $("#search-input").value = o.query;
+      $("#lang-select").value = o.lang;
+      state._variantRun = true;
+      $("#search-form").requestSubmit();
+    });
+  } else {
+    note.textContent = top.length
+      ? "La búsqueda devuelve muy poco. Estas variantes pueden ser más fructíferas; la consulta activa se indica siempre y puedes volver a la original."
+      : "La búsqueda devuelve muy poco y no se han encontrado variantes fiables para estos términos.";
+  }
+  chips.innerHTML = top.map((v, i) =>
+    `<button type="button" class="chip variant" data-v="${i}">«${esc(v.text)}» <span class="variant-tag">${esc(v.label)}</span></button>`).join("");
+  chips.querySelectorAll("[data-v]").forEach((b) =>
+    b.addEventListener("click", () => runVariant(top[+b.dataset.v])));
 }
 
 /* Coincidencia amplia pero honesta: todos los términos significativos en el
@@ -1332,6 +1542,8 @@ $("#search-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const raw = $("#search-input").value.trim();
   if (!raw) return;
+  if (state._variantRun) state._variantRun = false;
+  else { state.original = null; state.variantLabel = null; }
   state.query = raw;
   state.isbn = detectIsbn(raw);
   state.lang = $("#lang-select").value;
@@ -1430,5 +1642,8 @@ $("#search-form").addEventListener("submit", async (e) => {
   renderCCUC(ccuc);
   renderLibs(libs);
   renderCatalog(ol, gb.books, gb.error, editionCards, unconfirmed, L);
+  const totalHits = ol.length + (cdl.total || 0) + (ccuc.total || 0) +
+    libs.reduce((a, r) => a + (r.error ? 0 : (r.total || 0)), 0);
+  updateVariantsBlock(totalHits).catch(() => {});
   $("#search-btn").disabled = false;
 });
