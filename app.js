@@ -61,13 +61,13 @@ async function fetchText(url, timeoutMs = 12000) {
    Casa del Libro no comunica el idioma: sus resultados NO se filtran y se
    indica en su seccion. "all" = sin filtro en ninguna fuente. */
 const LANGS = {
-  es: { ol: "spa", ia: "Spanish",    gb: "es", label: "español" },
-  ca: { ol: "cat", ia: "Catalan",    gb: "ca", label: "catalán" },
-  en: { ol: "eng", ia: "English",    gb: "en", label: "inglés" },
-  fr: { ol: "fre", ia: "French",     gb: "fr", label: "francés" },
-  de: { ol: "ger", ia: "German",     gb: "de", label: "alemán" },
-  it: { ol: "ita", ia: "Italian",    gb: "it", label: "italiano" },
-  pt: { ol: "por", ia: "Portuguese", gb: "pt", label: "portugués" },
+  es: { ol: "spa", ia: "Spanish",    gb: "es", label: "español", cdl: ["Castellano", "Español"] },
+  ca: { ol: "cat", ia: "Catalan",    gb: "ca", label: "catalán", cdl: ["Catalán"] },
+  en: { ol: "eng", ia: "English",    gb: "en", label: "inglés", cdl: ["Inglés"] },
+  fr: { ol: "fre", ia: "French",     gb: "fr", label: "francés", cdl: ["Francés"] },
+  de: { ol: "ger", ia: "German",     gb: "de", label: "alemán", cdl: ["Alemán"] },
+  it: { ol: "ita", ia: "Italian",    gb: "it", label: "italiano", cdl: ["Italiano"] },
+  pt: { ol: "por", ia: "Portuguese", gb: "pt", label: "portugués", cdl: ["Portugués"] },
 };
 function activeLang() { return state.lang === "all" ? null : LANGS[state.lang]; }
 
@@ -140,10 +140,9 @@ async function queryArchiveOrg(query, isbn) {
 
 async function queryCasaDelLibro(query, isbn) {
   const q = isbn || query;
-  const url = `https://api.empathy.co/search/v1/query/cdl/search?query=${encodeURIComponent(q)}&lang=es&store=es&rows=8&start=0`;
-  const data = await fetchJson(url);
-  const items = (data.catalog && data.catalog.content) || [];
-  return items.map((b) => ({
+  const L = activeLang();
+  const base = `https://api.empathy.co/search/v1/query/cdl/search?query=${encodeURIComponent(q)}&lang=es&store=es&rows=8&start=0`;
+  const mapItem = (b) => ({
     name: b.name || "Sin título",
     authors: dedupeNames(b.authors),
     price: b.price && typeof b.price.current === "number" ? b.price.current : null,
@@ -155,7 +154,26 @@ async function queryCasaDelLibro(query, isbn) {
     isbn: b.ean || b.isbn || null,
     url: b.url || null,
     type: b.productType || null,
-  }));
+  });
+  const run = async (extra) => {
+    const data = await fetchJson(base + extra);
+    const cat = data.catalog || {};
+    return { total: cat.numFound || 0, items: (cat.content || []).map(mapItem) };
+  };
+  /* La tienda sí comunica idioma (faceta facetLang: Castellano, Catalán…):
+     con idioma elegido se filtra en la propia consulta, así el contador y
+     las fichas son resultados en ese idioma. Con ISBN no se filtra: una
+     edición concreta puede no tener el idioma etiquetado en la tienda. */
+  const langFilters = (!isbn && L && L.cdl)
+    ? L.cdl.map((l) => `&filter=${encodeURIComponent("facetLang:" + l)}`).join("")
+    : "";
+  const main = await run(langFilters);
+  let unfiltered = null;
+  if (langFilters && main.total === 0) {
+    const u = await run("");
+    if (u.total > 0) unfiltered = u;
+  }
+  return { total: main.total, items: main.items, unfiltered, langLabel: langFilters ? L.label : null };
 }
 
 async function queryGoogleBooks(query, isbn) {
@@ -629,13 +647,6 @@ const CHIP_TARGETS = {
 $("#status-bar").addEventListener("click", (e) => {
   const chip = e.target.closest(".chip");
   if (!chip || !chip.id.startsWith("chip-")) return;
-  if (chip.id === "chip-cdl") {
-    /* Pulsar la burbuja despliega sus resultados aunque estén apartados
-       por idioma: mismo efecto que el botón «ver sin filtrar». */
-    const cdlBox = $("#cdl-cards");
-    const cdlBtn = $("#cdl-show-unfiltered");
-    if (cdlBox && cdlBox.hidden) { cdlBox.hidden = false; if (cdlBtn) cdlBtn.hidden = true; }
-  }
   const target = document.getElementById(CHIP_TARGETS[chip.id.slice(5)] || "");
   if (!target) return;
   if (target.tagName === "DETAILS") target.open = true;
@@ -1008,23 +1019,28 @@ function renderFree(olBooks, iaDocs, filteredFree, L) {
     c.addEventListener("click", () => window.open(`https://archive.org/details/${c.dataset.ia}`, "_blank", "noopener")));
 }
 
-function renderCdl(items, L) {
+function renderCdl(res, L) {
   const box = $("#cdl-cards");
   const btn = $("#cdl-show-unfiltered");
+  const items = res.items || [];
+  const rel = $("#cdl-rel");
   /* Relevancia: si los primeros resultados no contienen los términos en
      título ni autor, la tienda los ha emparejado de forma aproximada
      (descripción, metadatos o stemming): se muestran, pero explicado. */
-  const rel = $("#cdl-rel");
-  const qNormD = normTxt(state.isbn || state.query);
-  const termsD = qNormD.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3);
-  const inTitleD = (b) => {
-    const hay = normTxt(b.name + " " + b.authors.join(" "));
-    return termsD.some((t) => hay.includes(t));
+  const showRel = (list) => {
+    const qNormD = normTxt(state.isbn || state.query);
+    const termsD = qNormD.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3);
+    const inTitleD = (b) => {
+      const hay = normTxt(b.name + " " + b.authors.join(" "));
+      return termsD.some((t) => hay.includes(t));
+    };
+    rel.hidden = !(!state.isbn && termsD.length && list.length && !list.slice(0, 4).some(inTitleD));
   };
-  rel.hidden = !(!state.isbn && termsD.length && items.length && !items.slice(0, 4).some(inTitleD));
-  $("#cdl-note").textContent = "Precio y disponibilidad online comunicados ahora mismo por la propia tienda." +
-    (L ? " Casa del Libro no indica el idioma de cada libro en su consulta: con un idioma elegido, sus resultados quedan apartados porque Rastro no puede confirmarlo." : "");
-  box.innerHTML = items.slice(0, 8).map((b, i) => `
+  const note = $("#cdl-note");
+  note.textContent = "Precio y disponibilidad online comunicados ahora mismo por la propia tienda." +
+    (res.langLabel ? ` Filtrado por idioma (${res.langLabel}), que la tienda sí comunica.` : "");
+  const paint = (list) => {
+    box.innerHTML = list.slice(0, 8).map((b, i) => `
     <div class="card" data-cdl="${i}">
       <h3>${esc(b.name)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}${b.publisher ? " · " + esc(b.publisher) : ""}${b.year ? " · " + esc(b.year) : ""}</p>
@@ -1034,23 +1050,36 @@ function renderCdl(items, L) {
         : '<p class="meta">Precio no comunicado</p>'}
       ${b.availability ? `<p class="avail${/sin stock|agotado|no disponible/i.test(b.availability) ? " out" : ""}">${esc(b.availability)}</p>` : ""}
       ${refBtn({ title: b.name, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
-    </div>`).join("") || '<p class="empty-note">Casa del Libro no ha devuelto resultados para esta búsqueda.</p>';
-  box.querySelectorAll(".card[data-cdl]").forEach((c) =>
-    c.addEventListener("click", () => {
-      const b = items[+c.dataset.cdl];
-      if (b && b.url) window.open(b.url, "_blank", "noopener");
-    }));
-  /* Con idioma elegido, los resultados sin filtrar se ocultan por defecto;
-     el usuario decide verlos con un botón explícito y rotulado. */
-  if (L && items.length) {
-    box.hidden = true;
-    btn.hidden = false;
-    btn.textContent = `Ver ${items.length} resultados de Casa del Libro sin filtrar por idioma (la tienda no lo comunica)`;
-    btn.onclick = () => { box.hidden = false; btn.hidden = true; };
-  } else {
-    box.hidden = false;
-    btn.hidden = true;
+    </div>`).join("");
+    box.querySelectorAll(".card[data-cdl]").forEach((c) =>
+      c.addEventListener("click", () => {
+        const b = list[+c.dataset.cdl];
+        if (b && b.url) window.open(b.url, "_blank", "noopener");
+      }));
+  };
+  if (!items.length) {
+    if (res.unfiltered && res.unfiltered.total > 0) {
+      /* Cero bajo el filtro de idioma: ausencia real declarada; las
+         coincidencias aproximadas de la tienda quedan a un clic, claramente
+         separadas y nunca presentadas como éxito. */
+      box.innerHTML = `<p class="empty-note">Sin resultados en ${esc(res.langLabel)} para esta búsqueda.</p>`;
+      btn.hidden = false;
+      btn.textContent = `Ver ${res.unfiltered.total} ${res.unfiltered.total === 1 ? "resultado" : "resultados"} de la tienda sin filtrar por idioma (búsqueda aproximada: pueden no ser pertinentes)`;
+      btn.onclick = () => {
+        paint(res.unfiltered.items);
+        showRel(res.unfiltered.items);
+        btn.hidden = true;
+      };
+    } else {
+      box.innerHTML = '<p class="empty-note">Casa del Libro no ha devuelto resultados para esta búsqueda.</p>';
+      btn.hidden = true;
+    }
+    rel.hidden = true;
+    return;
   }
+  btn.hidden = true;
+  paint(items);
+  showRel(items);
 }
 
 function renderCatalog(olBooks, gbBooks, gbError, editionCards, unconfirmed, L) {
@@ -1325,8 +1354,8 @@ $("#search-form").addEventListener("submit", async (e) => {
     .then((r) => { setChip("ia", `Archive.org: ${r.length} ejemplares`, "ok"); return r; })
     .catch(() => { setChip("ia", "Archive.org: sin respuesta", "warn"); return []; });
   const cdlP = queryCasaDelLibro(raw, state.isbn)
-    .then((r) => { setChip("cdl", `Casa del Libro: ${r.length} resultados`, "ok"); return r; })
-    .catch(() => { setChip("cdl", "Casa del Libro: sin respuesta", "warn"); return []; });
+    .then((r) => { setChip("cdl", `Casa del Libro: ${r.total} resultados`, "ok"); return r; })
+    .catch(() => { setChip("cdl", "Casa del Libro: sin respuesta", "warn"); return { total: 0, items: [], unfiltered: null, langLabel: null }; });
   const gbP = queryGoogleBooks(raw, state.isbn)
     .then((r) => { setChip("gb", `Google Books: ${r.length} fichas`, "ok"); return { books: r, error: false }; })
     .catch(() => { setChip("gb", "Google Books: no disponible ahora (cuota)", "warn"); return { books: [], error: true }; });
