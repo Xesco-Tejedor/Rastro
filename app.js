@@ -813,7 +813,9 @@ function renderCatalog(olBooks, gbBooks, gbError, editionCards, unconfirmed, L) 
 function renderCCUC(res) {
   const box = $("#ccuc-cards");
   if (!res || !res.items.length) {
-    box.innerHTML = '<p class="empty-note">El CCUC no ha devuelto registros para esta búsqueda.</p>';
+    box.innerHTML = res && res.total === null
+      ? '<p class="empty-note">El CCUC no se puede consultar por ISBN en esta versión (su zona de red no lo indexa). Prueba por título o autor.</p>'
+      : '<p class="empty-note">El CCUC no ha devuelto registros para esta búsqueda.</p>';
     return;
   }
   box.innerHTML = res.items.slice(0, 8).map((b, i) => `
@@ -1018,6 +1020,12 @@ $("#search-form").addEventListener("submit", async (e) => {
     }
     try {
       const r = await queryCCUC(q);
+      if (state.isbn && !byTitle) {
+        /* ISBN sin título resuelto: el SRU de la zona de red no indexa ISBN
+           (probado), así que 0 registros no significa ausencia: se dice. */
+        setChip("ccuc", "CCUC: no consulta por ISBN; prueba por título o autor", "");
+        return { total: null, items: [] };
+      }
       setChip("ccuc", `CCUC: ${r.total} registros${byTitle ? " (por título)" : ""}`, "ok");
       return r;
     } catch { setChip("ccuc", "CCUC: sin respuesta", "warn"); return { total: 0, items: [] }; }
