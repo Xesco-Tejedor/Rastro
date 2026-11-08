@@ -77,6 +77,12 @@ function normTxt(str) {
   return (str || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
+/* Año presentable: "0", "0000" y similares no son una fecha. */
+function cleanYear(y) {
+  const m = String(y == null ? "" : y).match(/(\d{4})/);
+  return m && +m[1] ? m[1] : null;
+}
+
 /* Coincidencia amplia pero honesta: todos los términos significativos en el
    título, o alguno en el autor. Evita presentar como hallazgo algo ajeno. */
 function matchesQueryLoose(title, creator) {
@@ -149,7 +155,7 @@ async function queryCasaDelLibro(query, isbn) {
     previous: b.price && typeof b.price.previous === "number" ? b.price.previous : null,
     availability: b.availability || null,
     binding: b.encuadernation || null,
-    year: b.yearPublication || null,
+    year: cleanYear(b.yearPublication),
     publisher: b.editorial || null,
     isbn: b.ean || b.isbn || null,
     url: b.url || null,
@@ -212,7 +218,7 @@ async function editionsInLang(work, L) {
         key: e.key,
         title: e.title || work.title,
         authors: work.authors,
-        year: y ? y[1] : null,
+        year: cleanYear(y ? y[1] : null),
         publisher: (e.publishers || [])[0] || null,
         isbn: (e.isbn_13 || [])[0] || (e.isbn_10 || [])[0] || null,
         isbns: [...(e.isbn_13 || []), ...(e.isbn_10 || [])],
@@ -341,7 +347,7 @@ async function queryCCUC(query) {
     return {
       title: tb ? ta + " " + tb : ta,
       authors,
-      year: y ? y[1] : null,
+      year: cleanYear(y ? y[1] : null),
       publisher: pub ? pub.replace(/[.,;:]+$/, "").trim() : null,
       isbn: (df(rec, "020", "a")[0] || "").split(" ")[0] || null,
       url: `https://ccuc.csuc.cat/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=${CCUC_VID}&lang=es`,
@@ -392,7 +398,7 @@ function marc21Items(doc, linkFor) {
     return {
       title: tb ? ta + " " + tb : ta,
       authors,
-      year: y ? y[1] : null,
+      year: cleanYear(y ? y[1] : null),
       publisher: pub ? pub.replace(/[.,;:]+$/, "").trim() : null,
       isbn: (df(rec, "020", "a")[0] || "").split(" ")[0] || null,
       url: id ? linkFor(id) : null,
@@ -431,7 +437,7 @@ function unimarcItems(doc) {
     return {
       title: te ? ta + " " + te : ta,
       authors: authorsFull,
-      year: y ? y[1] : null,
+      year: cleanYear(y ? y[1] : null),
       publisher: pub ? pub.replace(/[.,;:]+$/, "").trim() : null,
       isbn: (df(rec, "010", "a")[0] || "").split(" ")[0] || null,
       url: ark ? "https://catalogue.bnf.fr/" + ark.replace(/^https?:\/\/catalogue\.bnf\.fr\//, "") : null,
@@ -482,7 +488,7 @@ const LIB_SOURCES = [
       const items = (j.results || []).map((it) => ({
         title: it.title || "Sin título",
         authors: (it.contributor || []).map((a) => a.replace(/\b\w/g, (c) => c.toUpperCase())),
-        year: (String(it.date || "").match(/(\d{4})/) || [])[1] || null,
+        year: cleanYear(it.date),
         publisher: null,
         isbn: null,
         url: it.url || null,
@@ -540,7 +546,7 @@ const LIB_SOURCES = [
       const items = (xs.list || []).map((it) => ({
         title: it.title || "Sin título",
         authors: it.creator ? [String([].concat(it.creator)[0]).replace(/[.,;:\s]+$/, "")] : [],
-        year: (String([].concat(it.date || "")[0]).match(/(\d{4})/) || [])[1] || null,
+        year: cleanYear([].concat(it.date || "")[0]),
         publisher: it.publisher ? String([].concat(it.publisher)[0]).replace(/[.,;:]+$/, "").trim() : null,
         isbn: it.isbn || null,
         url: it.identifier || null,
@@ -1069,6 +1075,12 @@ function renderCdl(res, L) {
         paint(res.unfiltered.items);
         showRel(res.unfiltered.items);
         btn.hidden = true;
+        /* La sección ya no muestra el modo filtrado: la etiqueta pasa a
+           reflejar la vista efectiva. El idioma elegido sigue activo en
+           las demás fuentes y en una nueva búsqueda. */
+        note.textContent = "Precio y disponibilidad online comunicados ahora mismo por la propia tienda. " +
+          "Mostrando resultados de la tienda sin filtrar por idioma (búsqueda aproximada: pueden no ser pertinentes); " +
+          "el filtro de idioma elegido sigue activo en el resto de fuentes.";
       };
     } else {
       box.innerHTML = '<p class="empty-note">Casa del Libro no ha devuelto resultados para esta búsqueda.</p>';
