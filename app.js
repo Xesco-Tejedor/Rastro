@@ -541,7 +541,7 @@ async function queryAllLibs(raw, isbn) {
   return Promise.all(LIB_SOURCES.map(async (s) => {
     try {
       const r = await s.query(clean, isbn);
-      setChip(s.id, `${s.chip}: ${r.total} registros`, "ok");
+      setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}`, "ok");
       return { src: s, total: r.total, items: r.items, error: false };
     } catch (e) {
       setChip(s.id, `${s.chip}: sin respuesta`, "warn");
@@ -572,8 +572,8 @@ function renderLibs(results) {
         <p class="meta">${esc(r.src.chip)} · disponibilidad y biblioteca concreta se confirman en la ficha enlazada</p>
         ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
       </div>`).join("");
-    const more = r.total > 4 ? `<p class="section-note sub"><a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver los ${r.total} registros en la web oficial de ${esc(r.src.chip)}</a></p>` : "";
-    return `<div class="lib-group"><h3>${esc(r.src.name)} <span class="lib-total">${r.total} registros</span></h3><p class="section-note sub">${esc(r.src.note)}</p><div class="cards">${cards}</div>${more}</div>`;
+    const more = r.total > 4 ? `<p class="section-note sub"><a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver ${r.total === 1 ? "el registro" : `los ${r.total} registros`} en la web oficial de ${esc(r.src.chip)}</a></p>` : "";
+    return `<div class="lib-group"><h3>${esc(r.src.name)} <span class="lib-total">${r.total} ${r.total === 1 ? "registro" : "registros"}</span></h3><p class="section-note sub">${esc(r.src.note)}</p><div class="cards">${cards}</div>${more}</div>`;
   }).join("");
   box.querySelectorAll(".card[data-lib]").forEach((c) =>
     c.addEventListener("click", () => {
