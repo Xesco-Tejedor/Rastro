@@ -295,9 +295,10 @@ async function queryWikisource(query, isbn) {
    El SRU no incluye disponibilidad por biblioteca: cada tarjeta enlaza la
    ficha del CCUC, donde se ven las bibliotecas que lo tienen y su estado. */
 const CCUC_VID = "34CSUC_NETWORK:CSUC_CCUC_UNION";
-/* Catálogos que aportan registros al colectivo, por su código en 035/040.
-   Solo se rotulan los verificados; otros códigos quedan como "CCUC". */
-const CCUC_ORGS = { "ES-BaCBU": "Biblioteca de Catalunya" };
+/* El 035 (p. ej. ES-BaCBU) solo indica PROCEDENCIA del registro, no fondos:
+   comprobado contra Primo (registros ES-BaCBU cuyas bibliotecas son CLR/UB/URL
+   sin BC). Por eso NO se rotula ninguna biblioteca concreta: las que tienen
+   el ejemplar se ven solo en la ficha enlazada del CCUC. */
 
 async function queryCCUC(query) {
   const clean = query.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
@@ -319,16 +320,12 @@ async function queryCCUC(query) {
     const pub = df(rec, "260", "b")[0] || df(rec, "264", "b")[0] || null;
     const dateRaw = df(rec, "260", "c")[0] || df(rec, "264", "c")[0] || ctrl("008").slice(7, 11);
     const y = (dateRaw || "").match(/(\d{4})/);
-    const orgs = [...new Set(df(rec, "035", "a")
-      .map((x) => { const m = x.match(/^\((ES-[A-Za-z0-9]+)\)/); return m ? m[1] : null; })
-      .filter(Boolean))];
     return {
       title: tb ? ta + " " + tb : ta,
       authors,
       year: y ? y[1] : null,
       publisher: pub ? pub.replace(/[.,;:]+$/, "").trim() : null,
       isbn: (df(rec, "020", "a")[0] || "").split(" ")[0] || null,
-      orgs,
       url: `https://ccuc.csuc.cat/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=${CCUC_VID}&lang=es`,
     };
   }).map((b) => ({ ...b, title: b.title.replace(/"{2,}/g, '"') }))
@@ -820,7 +817,6 @@ function renderCCUC(res) {
   }
   box.innerHTML = res.items.slice(0, 8).map((b, i) => `
     <div class="card" data-ccuc="${i}">
-      <div class="card-badges">${b.orgs.filter((o) => CCUC_ORGS[o]).map((o) => `<span class="badge badge-real">${esc(CCUC_ORGS[o])}</span>`).join("")}</div>
       <h3>${esc(b.title)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + esc(b.year) : ""}</p>
       ${b.publisher ? `<p class="meta">${esc(b.publisher)}</p>` : ""}
