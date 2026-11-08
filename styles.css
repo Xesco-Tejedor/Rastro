@@ -120,6 +120,11 @@ main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; paddin
 .chip.ok { color: var(--ok); border-color: rgba(123, 196, 127, 0.4); }
 .chip.warn { color: var(--amber-soft); }
 .chip.loading::after { content: "…"; animation: dots 1s steps(3) infinite; }
+.variant-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.chip.variant { cursor: pointer; font-size: 0.85rem; padding: 6px 14px; color: var(--text); }
+.chip.variant:hover { border-color: var(--accent, #f5a623); }
+.chip.variant .variant-tag { color: var(--text-dim); font-size: 0.78rem; margin-left: 4px; }
+#variant-back { margin-left: 8px; }
 @keyframes dots { 0% { content: "·"; } 50% { content: "··"; } 100% { content: "···"; } }
 
 .results { display: flex; flex-direction: column; gap: 34px; margin-top: 26px; }
