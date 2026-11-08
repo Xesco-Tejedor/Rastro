@@ -331,7 +331,15 @@ async function queryCCUC(query) {
       orgs,
       url: `https://ccuc.csuc.cat/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=${CCUC_VID}&lang=es`,
     };
-  }).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+  }).map((b) => ({ ...b, title: b.title.replace(/"{2,}/g, '"') }))
+    .filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
+  /* El SRU ordena por relevancia de catálogo y suele anteponer artículos
+     SOBRE la obra a la propia obra. Reordenación honesta: primero los
+     registros cuyo título empieza por la búsqueda; el resto después. */
+  const nq = normTxt(clean);
+  const head = nq.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3).slice(0, 2).join(" ");
+  const rank = (b) => { const t = normTxt(b.title); return t.startsWith(nq) ? 0 : (head && t.startsWith(head) ? 1 : 2); };
+  items.sort((a, b) => rank(a) - rank(b));
   return { total, items };
 }
 
