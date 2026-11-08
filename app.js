@@ -476,7 +476,7 @@ const LIB_SOURCES = [
     note: "Catálogo general de la BnF (Gallica y fondos propios), más fuerte en producción francesa. La disponibilidad se confirma en la ficha enlazada.",
     searchUrl: (q) => `https://catalogue.bnf.fr/rechercher.do?motRecherche=${encodeURIComponent(q)}&critereRecherche=0`,
     query: async (clean, isbn) => {
-      const cql = isbn ? `bib.isbn all "${isbn}"` : `bib.any all "${clean}"`;
+      const cql = isbn ? `bib.isbn all "${isbn}"` : `(bib.title all "${clean}" or bib.author all "${clean}")`;
       const url = "https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = unimarcItems(doc).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
@@ -488,7 +488,7 @@ const LIB_SOURCES = [
     note: "Recoge la producción de Alemania y en alemán desde 1913. La disponibilidad se confirma en la ficha enlazada.",
     searchUrl: (q) => `https://portal.dnb.de/opac.htm?method=simpleSearch&query=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
-      const cql = isbn ? `num=${isbn}` : `WOE="${clean}"`;
+      const cql = isbn ? `num=${isbn}` : `WOE=${clean.replace(/"/g," ")}`;
       const url = "https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = marc21Items(doc, (id) => `https://d-nb.info/${encodeURIComponent(id)}`)
@@ -501,7 +501,7 @@ const LIB_SOURCES = [
     note: "Mayor catálogo colectivo de bibliotecas científicas alemanas (GBV y suroeste). La disponibilidad se confirma en la ficha enlazada.",
     searchUrl: (q) => `https://kxp.k10plus.de/DB=2.1/CMD?ACT=SRCHA&IKT=1016&TRM=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
-      const cql = isbn ? `pica.isb=${isbn}` : `pica.all all "${clean}"`;
+      const cql = isbn ? `pica.isb=${isbn}` : `pica.all="${clean}"`;
       const url = "https://sru.k10plus.de/gvk?version=1.1&operation=searchRetrieve&recordSchema=marcxml&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = marc21Items(doc, (ppn) => `https://kxp.k10plus.de/DB=2.1/PPNSET?PPN=${encodeURIComponent(ppn)}`)
