@@ -424,9 +424,12 @@ function unimarcItems(doc) {
 
 function sruDoc(xml) {
   const doc = new DOMParser().parseFromString(xml, "application/xml");
-  if (doc.getElementsByTagNameNS("*", "diagnostic").length) throw new Error("SRU diagnostic");
   const nEl = doc.getElementsByTagNameNS("*", "numberOfRecords")[0];
-  return { doc, total: Number(nEl ? nEl.textContent : 0) };
+  const total = Number(nEl ? nEl.textContent : 0);
+  /* BnF emite a veces un diagnóstico parcial ("erreur de traitement") pese a
+     devolver registros válidos: solo es error si no hay ninguno. */
+  if (!total && doc.getElementsByTagNameNS("*", "diagnostic").length) throw new Error("SRU diagnostic");
+  return { doc, total };
 }
 
 /* Reordenación igual que CCUC: primero los títulos que empiezan por la
@@ -488,7 +491,7 @@ const LIB_SOURCES = [
     note: "Recoge la producción de Alemania y en alemán desde 1913. La disponibilidad se confirma en la ficha enlazada.",
     searchUrl: (q) => `https://portal.dnb.de/opac.htm?method=simpleSearch&query=${encodeURIComponent(q)}`,
     query: async (clean, isbn) => {
-      const cql = isbn ? `num=${isbn}` : `WOE=${clean.replace(/"/g," ")}`;
+      const cql = isbn ? `num=${isbn}` : `title=${clean.replace(/"/g," ")}`;
       const url = "https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&maximumRecords=20&query=" + encodeURIComponent(cql);
       const { doc, total } = sruDoc(await fetchText(url));
       const items = marc21Items(doc, (id) => `https://d-nb.info/${encodeURIComponent(id)}`)
@@ -519,9 +522,9 @@ const LIB_SOURCES = [
       const xs = j.xsearch || {};
       const items = (xs.list || []).map((it) => ({
         title: it.title || "Sin título",
-        authors: it.creator ? [it.creator.replace(/[.,;:\s]+$/, "")] : [],
-        year: (String(it.date || "").match(/(\d{4})/) || [])[1] || null,
-        publisher: it.publisher ? it.publisher.replace(/[.,;:]+$/, "").trim() : null,
+        authors: it.creator ? [String([].concat(it.creator)[0]).replace(/[.,;:\s]+$/, "")] : [],
+        year: (String([].concat(it.date || "")[0]).match(/(\d{4})/) || [])[1] || null,
+        publisher: it.publisher ? String([].concat(it.publisher)[0]).replace(/[.,;:]+$/, "").trim() : null,
         isbn: it.isbn || null,
         url: it.identifier || null,
       })).filter((b) => matchesQueryLoose(b.title, b.authors.join(", ")));
