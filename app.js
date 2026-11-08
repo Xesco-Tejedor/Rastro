@@ -552,13 +552,13 @@ function renderLibs(results) {
   if (!results || !results.length) { box.innerHTML = ""; return; }
   box.innerHTML = results.map((r) => {
     if (r.error) {
-      return `<div class="lib-group"><h3>${esc(r.src.name)}</h3><p class="empty-note">Sin respuesta en este momento; se reintenta en la próxima búsqueda.</p></div>`;
+      return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">Sin respuesta en este momento; se reintenta en la próxima búsqueda.</p></div>`;
     }
     if (!r.items.length) {
       const nota = r.total > 0
         ? `El catálogo devuelve ${r.total} registros de coincidencia amplia, pero ninguno coincide claramente con la búsqueda entre los primeros recuperados. <a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial de ${esc(r.src.chip)}</a>`
         : "Sin registros para esta búsqueda.";
-      return `<div class="lib-group"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
+      return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
     }
     const cards = r.items.slice(0, 4).map((b, i) => `
       <div class="card" data-lib="${r.src.id}-${i}">
@@ -570,7 +570,7 @@ function renderLibs(results) {
         ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
       </div>`).join("");
     const more = r.total > 4 ? `<p class="section-note sub"><a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver ${r.total === 1 ? "el registro" : `los ${r.total} registros`} en la web oficial de ${esc(r.src.chip)}</a></p>` : "";
-    return `<div class="lib-group"><h3>${esc(r.src.name)} <span class="lib-total">${r.total} ${r.total === 1 ? "registro" : "registros"}</span></h3><p class="section-note sub">${esc(r.src.note)}</p><div class="cards">${cards}</div>${more}</div>`;
+    return `<details class="lib-group" id="libgroup-${r.src.id}"><summary>${esc(r.src.name)} <span class="lib-total">${r.total} ${r.total === 1 ? "registro" : "registros"}</span></summary><p class="section-note sub">${esc(r.src.note)}</p><div class="cards">${cards}</div>${more}</details>`;
   }).join("");
   box.querySelectorAll(".card[data-lib]").forEach((c) =>
     c.addEventListener("click", () => {
@@ -593,6 +593,24 @@ function storeLinks(query, isbn) {
     { name: "Laie", kind: "librería", url: `https://www.laie.es/es/searchres/all?search=${term}` },
   ];
 }
+
+
+/* Burbujas clicables: pulsar una burbuja despliega los resultados de su
+   fuente (los grupos de bibliotecas vienen plegados) y se desplaza a ellos. */
+const CHIP_TARGETS = {
+  ol: "block-free", ia: "block-free", se: "block-dl", ws: "block-dl",
+  cdl: "block-cdl", gb: "block-catalog", ccuc: "block-ccuc",
+  bne: "libgroup-bne", loc: "libgroup-loc", bnf: "libgroup-bnf",
+  dnb: "libgroup-dnb", k10: "libgroup-k10", libris: "libgroup-libris",
+};
+$("#status-bar").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip || !chip.id.startsWith("chip-")) return;
+  const target = document.getElementById(CHIP_TARGETS[chip.id.slice(5)] || "");
+  if (!target) return;
+  if (target.tagName === "DETAILS") target.open = true;
+  target.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 /* ==================== 3. Referencias (lista persistente) ==================== */
 
