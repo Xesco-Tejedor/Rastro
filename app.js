@@ -470,7 +470,7 @@ const LIB_SOURCES = [
         isbn: null,
         url: it.url || null,
       }));
-      return { total: j.pagination ? j.pagination.total : items.length, items: rankWorkFirst(items, clean) };
+      return { total: (j.pagination && (j.pagination.of || j.pagination.total)) || items.length, items: rankWorkFirst(items, clean) };
     },
   },
   {
