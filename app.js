@@ -239,11 +239,11 @@ function runVariant(v) {
   $("#search-form").requestSubmit();
 }
 
-async function updateVariantsBlock(totalHits) {
+async function updateVariantsBlock(scarceArg) {
   const block = $("#block-variants"), chips = $("#variant-chips"), note = $("#variants-note");
   if (!block) return;
   const raw = state.query, L = activeLang();
-  const scarce = totalHits <= 2 && !state.isbn;
+  const scarce = scarceArg && !state.isbn;
   if (!state.original && !scarce) { block.hidden = true; return; }
   block.hidden = false;
   const items = [];
@@ -1642,8 +1642,21 @@ $("#search-form").addEventListener("submit", async (e) => {
   renderCCUC(ccuc);
   renderLibs(libs);
   renderCatalog(ol, gb.books, gb.error, editionCards, unconfirmed, L);
-  const totalHits = ol.length + (cdl.total || 0) + (ccuc.total || 0) +
-    libs.reduce((a, r) => a + (r.error ? 0 : (r.total || 0)), 0);
-  updateVariantsBlock(totalHits).catch(() => {});
+  /* Escaso = ninguna fuente muestra coincidencia clara en título/autor
+     entre sus primeras fichas (los totales de coincidencia amplia, como
+     los 50 de LoC para esta consulta, no cuentan como resultado útil). */
+  const vq = normTxt(state.isbn || raw).split(/[^a-z0-9áéíóúüñ]+/).filter((t) => t.length >= 3);
+  const titleHit = (list, get) => vq.length > 0 && list.slice(0, 4).some((b) => {
+    const hay = normTxt(get(b));
+    return vq.some((t) => hay.includes(t));
+  });
+  let pertinentSrc = 0;
+  if (ol.length) pertinentSrc++;
+  if ((cdl.total || 0) > 0 && titleHit(cdl.items, (b) => b.name + " " + b.authors.join(" "))) pertinentSrc++;
+  if ((ccuc.total || 0) > 0 && titleHit(ccuc.items, (b) => b.title + " " + b.authors.join(" "))) pertinentSrc++;
+  libs.forEach((r) => {
+    if (!r.error && (r.total || 0) > 0 && titleHit(r.items, (b) => b.title + " " + b.authors.join(" "))) pertinentSrc++;
+  });
+  updateVariantsBlock(pertinentSrc === 0).catch(() => {});
   $("#search-btn").disabled = false;
 });
