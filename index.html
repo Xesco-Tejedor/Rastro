@@ -32,7 +32,7 @@
 
 <main>
   <section class="search-hero">
-    <p class="intro">Busca por <strong>título, autor, palabras clave o ISBN</strong>. Rastro consulta en directo las fuentes que permiten consulta real y prepara enlaces de búsqueda para el resto. Nada de precios ni stock inventados: si una fuente no responde, lo verás.</p>
+    <p class="intro">Busca por <strong>título, autor, palabras clave o ISBN</strong>. Qué comprueba cada fuente, en <a href="#fuentes">Fuentes</a>.</p>
     <form id="search-form" class="search-box">
       <input id="search-input" type="search" placeholder="Ej.: Don Quijote de la Mancha · Cervantes · 9788467033481" autocomplete="off">
       <select id="lang-select" aria-label="Idioma de los libros">
@@ -63,7 +63,7 @@
 
     <div class="section-block" id="block-dl">
       <h2>⬇️ Descarga gratuita <span class="badge badge-real">consulta real</span></h2>
-      <p class="section-note">Descargas directas de fuentes de texto libre. <strong>Standard Ebooks</strong> comprueba que cada obra está libre de derechos en EE. UU. y la propia fuente avisa de que en otros países puede seguir protegida: <strong>Rastro no lo verifica para España</strong> — la página de cada libro detalla su situación. Su catálogo es en inglés y cada fichero se comprueba (que existe y es EPUB) antes de mostrarse. <strong>Wikisource</strong> se consulta en la edición del idioma elegido (con «todos los idiomas», la española): cada obra indica su licencia en su página (sin verificar para España) y el EPUB lo genera al abrirlo la herramienta oficial de Wikimedia (WS Export).</p>
+      <p class="section-note">Descargas de texto libre: Standard Ebooks (en inglés) y Wikisource (idioma elegido). Derechos según cada fuente, sin verificar para España.</p>
       <div class="cards" id="dl-cards"></div>
     </div>
 
@@ -76,13 +76,13 @@
 
     <div class="section-block" id="block-ccuc">
       <h2>🏛️ Bibliotecas (CCUC) <span class="badge badge-real">consulta real</span></h2>
-      <p class="section-note">Catálogo consultado en directo: el Catàleg Col·lectiu de les Universitats de Catalunya reúne los fondos de las universidades catalanas, la Biblioteca de Catalunya y otras bibliotecas del consorcio CSUC (cobertura catalana; no incluye universidades de fuera). Qué bibliotecas tienen el ejemplar y su disponibilidad se confirman en la ficha enlazada del CCUC. El selector de idioma no filtra este catálogo.</p>
+      <p class="section-note">Universidades catalanas, Biblioteca de Catalunya y CSUC. Biblioteca concreta y disponibilidad, en la ficha enlazada. El idioma no filtra este catálogo.</p>
       <div class="cards" id="ccuc-cards"></div>
     </div>
 
     <div class="section-block" id="block-libs">
       <h2>🏛️ Más bibliotecas (España y mundo) <span class="badge badge-real">consulta real</span></h2>
-      <p class="section-note">Seis catálogos nacionales y colectivos consultados en directo. Qué biblioteca tiene el ejemplar y si está disponible se confirma en la ficha enlazada de cada tarjeta; la cobertura y los límites de cada fuente van en su propio bloque. El selector de idioma no filtra estos catálogos.</p>
+      <p class="section-note">Seis catálogos consultados en directo; cada tarjeta enlaza la ficha oficial. El idioma no filtra estos catálogos.</p>
       <div id="libs-groups"></div>
     </div>
 
@@ -136,6 +136,7 @@
       <li>En <strong>Casa del Libro</strong> verás precio y disponibilidad reales en ese momento.</li>
       <li>En <strong>Bibliotecas (CCUC)</strong> verás si el libro está en el catálogo colectivo de las universidades catalanas y la Biblioteca de Catalunya; la ficha enlazada indica en qué biblioteca está y si está disponible.</li>
       <li>En <strong>Otras tiendas</strong>, pulsa una tienda y se abrirá su web con tu búsqueda ya escrita. Comprueba allí precio y estado.</li>
+      <li>Pulsa una <strong>burbuja de fuente</strong> (Open Library, BNE…) para saltar a su bloque; en «Más bibliotecas» cada bloque se despliega y, si hay más fichas, «Mostrar más» las carga dentro de Rastro.</li>
       <li>Toca cualquier ficha para ver su detalle con ISBN y enlaces a todas las tiendas.</li>
       <li>Guarda fichas con <strong>＋ Referencia</strong> y expórtalas desde <strong>Mi lista</strong> en APA 7, Chicago 18, MLA 9 o BibTeX. Si un dato es dudoso, edítalo con el botón ✎ antes de exportar.</li>
     </ol>
@@ -173,6 +174,6 @@
   <p>Rastro · demo pública · <a href="https://github.com/Xesco-Tejedor/Rastro">código en GitHub</a></p>
 </footer>
 
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
