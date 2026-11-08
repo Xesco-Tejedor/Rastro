@@ -1092,13 +1092,16 @@ function renderCatalog(olBooks, gbBooks, gbError, editionCards, unconfirmed, L) 
 
 function renderCCUC(res) {
   const box = $("#ccuc-cards");
+  const official = `https://ccuc.csuc.cat/discovery/search?query=any,contains,${encodeURIComponent(state.isbn || state.query)}&vid=${CCUC_VID}&lang=es`;
   if (!res || !res.items.length) {
     box.innerHTML = res && res.total === null
       ? '<p class="empty-note">El CCUC no se puede consultar por ISBN en esta versión (su zona de red no lo indexa). Prueba por título o autor.</p>'
-      : '<p class="empty-note">El CCUC no ha devuelto registros para esta búsqueda.</p>';
+      : (res && res.total > 0
+        ? `<p class="empty-note">El CCUC devuelve ${res.total} registros, pero ninguno coincide claramente con la búsqueda entre los primeros recuperados. <a href="${esc(official)}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial del CCUC</a></p>`
+        : '<p class="empty-note">El CCUC no ha devuelto registros para esta búsqueda.</p>');
     return;
   }
-  box.innerHTML = res.items.slice(0, 8).map((b, i) => `
+  const cardHtml = (b, i) => `
     <div class="card" data-ccuc="${i}">
       <h3>${esc(b.title)}</h3>
       <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + esc(b.year) : ""}</p>
@@ -1106,7 +1109,21 @@ function renderCCUC(res) {
       ${b.isbn ? `<p class="meta">ISBN ${esc(b.isbn)}</p>` : ""}
       <p class="meta">Catálogo colectivo CCUC · las bibliotecas que lo tienen y su disponibilidad se confirman en la ficha enlazada</p>
       ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
-    </div>`).join("");
+    </div>`;
+  const fetched = res.items.length;
+  const shown = Math.min(8, fetched);
+  const counts = `<p class="section-note sub" data-count="ccuc">Se muestran ${shown} de ${res.total} ${res.total === 1 ? "registro" : "registros"}.</p>`;
+  const restDiv = fetched > 8 ? `<div class="cards" id="ccuc-rest" hidden>${res.items.slice(8).map((b, i) => cardHtml(b, i + 8)).join("")}</div>` : "";
+  const moreBtn = fetched > 8 ? `<p><button type="button" class="btn-ghost" id="ccuc-more">Mostrar ${fetched - 8} más en Rastro</button></p>` : "";
+  const more = res.total > fetched ? `<p class="section-note sub"><a href="${esc(official)}" target="_blank" rel="noopener">Ver los ${res.total} registros en la web oficial del CCUC</a></p>` : "";
+  box.innerHTML = counts + `<div class="cards">${res.items.slice(0, 8).map(cardHtml).join("")}</div>` + restDiv + moreBtn + more;
+  const moreBtnEl = $("#ccuc-more");
+  if (moreBtnEl) moreBtnEl.addEventListener("click", () => {
+    $("#ccuc-rest").hidden = false;
+    const cnt = box.querySelector('[data-count="ccuc"]');
+    if (cnt) cnt.textContent = `Se muestran ${fetched} de ${res.total} ${res.total === 1 ? "registro" : "registros"}.`;
+    moreBtnEl.closest("p").remove();
+  });
   box.querySelectorAll(".card[data-ccuc]").forEach((c) =>
     c.addEventListener("click", () => { const b = res.items[+c.dataset.ccuc]; if (b && b.url) window.open(b.url, "_blank", "noopener"); }));
 }
