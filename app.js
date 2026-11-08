@@ -579,7 +579,7 @@ function renderLibs(results) {
     const first = r.items.slice(0, 4).map(cardHtml).join("");
     const restHtml = fetched > 4 ? r.items.slice(4).map((b, i) => cardHtml(b, i + 4)).join("") : "";
     const counts = `<p class="section-note sub" data-count="${r.src.id}">Se muestran ${Math.min(4, fetched)} de ${r.total} ${r.total === 1 ? "registro" : "registros"}.</p>`;
-    const relNote = (!state.isbn && terms.length && !r.items.some(inTitle))
+    const relNote = (!state.isbn && terms.length && !r.items.slice(0, 4).some(inTitle))
       ? `<p class="section-note sub">Los términos coinciden en materias o descripción de estos registros, no en el título ni el autor.</p>`
       : "";
     const restDiv = fetched > 4 ? `<div class="cards" id="librest-${r.src.id}" hidden>${restHtml}</div>` : "";
