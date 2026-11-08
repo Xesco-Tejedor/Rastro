@@ -579,7 +579,7 @@ function renderLibs(results) {
     const restHtml = fetched > 4 ? r.items.slice(4).map((b, i) => cardHtml(b, i + 4)).join("") : "";
     const counts = `<p class="section-note sub" data-count="${r.src.id}">Se muestran ${Math.min(4, fetched)} de ${r.total} ${r.total === 1 ? "registro" : "registros"}.</p>`;
     const relNote = (!state.isbn && terms.length && !r.items.slice(0, 4).some(inTitle))
-      ? `<p class="section-note sub">Los términos coinciden en materias o descripción de estos registros, no en el título ni el autor.</p>`
+      ? `<p class="section-note sub">Los términos coinciden en la descripción u otros campos del registro, no en el título ni el autor.</p>`
       : "";
     const restDiv = fetched > 4 ? `<div class="cards" id="librest-${r.src.id}" hidden>${restHtml}</div>` : "";
     const moreBtn = fetched > 4 ? `<p><button type="button" class="btn-ghost lib-more" data-more="${r.src.id}">Mostrar ${fetched - 4} más en Rastro</button></p>` : "";
@@ -629,6 +629,13 @@ const CHIP_TARGETS = {
 $("#status-bar").addEventListener("click", (e) => {
   const chip = e.target.closest(".chip");
   if (!chip || !chip.id.startsWith("chip-")) return;
+  if (chip.id === "chip-cdl") {
+    /* Pulsar la burbuja despliega sus resultados aunque estén apartados
+       por idioma: mismo efecto que el botón «ver sin filtrar». */
+    const cdlBox = $("#cdl-cards");
+    const cdlBtn = $("#cdl-show-unfiltered");
+    if (cdlBox && cdlBox.hidden) { cdlBox.hidden = false; if (cdlBtn) cdlBtn.hidden = true; }
+  }
   const target = document.getElementById(CHIP_TARGETS[chip.id.slice(5)] || "");
   if (!target) return;
   if (target.tagName === "DETAILS") target.open = true;
@@ -1004,6 +1011,17 @@ function renderFree(olBooks, iaDocs, filteredFree, L) {
 function renderCdl(items, L) {
   const box = $("#cdl-cards");
   const btn = $("#cdl-show-unfiltered");
+  /* Relevancia: si los primeros resultados no contienen los términos en
+     título ni autor, la tienda los ha emparejado de forma aproximada
+     (descripción, metadatos o stemming): se muestran, pero explicado. */
+  const rel = $("#cdl-rel");
+  const qNormD = normTxt(state.isbn || state.query);
+  const termsD = qNormD.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3);
+  const inTitleD = (b) => {
+    const hay = normTxt(b.name + " " + b.authors.join(" "));
+    return termsD.some((t) => hay.includes(t));
+  };
+  rel.hidden = !(!state.isbn && termsD.length && items.length && !items.slice(0, 4).some(inTitleD));
   $("#cdl-note").textContent = "Precio y disponibilidad online comunicados ahora mismo por la propia tienda." +
     (L ? " Casa del Libro no indica el idioma de cada libro en su consulta: con un idioma elegido, sus resultados quedan apartados porque Rastro no puede confirmarlo." : "");
   box.innerHTML = items.slice(0, 8).map((b, i) => `
@@ -1090,10 +1108,14 @@ function renderCatalog(olBooks, gbBooks, gbError, editionCards, unconfirmed, L) 
 }
 
 function renderCCUC(res) {
+  const meta = $("#ccuc-meta");
   const box = $("#ccuc-cards");
+  const after = $("#ccuc-after");
+  meta.innerHTML = "";
+  after.innerHTML = "";
   const official = `https://ccuc.csuc.cat/discovery/search?query=any,contains,${encodeURIComponent(state.isbn || state.query)}&vid=${CCUC_VID}&lang=es`;
   if (!res || !res.items.length) {
-    box.innerHTML = res && res.total === null
+    meta.innerHTML = res && res.total === null
       ? '<p class="empty-note">El CCUC no se puede consultar por ISBN en esta versión (su zona de red no lo indexa). Prueba por título o autor.</p>'
       : (res && res.total > 0
         ? `<p class="empty-note">El CCUC devuelve ${res.total} registros, pero ninguno coincide claramente con la búsqueda entre los primeros recuperados. <a href="${esc(official)}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial del CCUC</a></p>`
@@ -1119,16 +1141,18 @@ function renderCCUC(res) {
     return termsC.some((t) => hay.includes(t));
   };
   const relNoteC = (!state.isbn && termsC.length && !res.items.slice(0, 8).some(inTitleC))
-    ? `<p class="section-note sub">Los términos coinciden en materias o descripción de estos registros, no en el título ni el autor.</p>`
+    ? `<p class="section-note sub">Los términos coinciden en la descripción u otros campos del registro, no en el título ni el autor.</p>`
     : "";
   const restDiv = fetched > 8 ? `<div class="cards" id="ccuc-rest" hidden>${res.items.slice(8).map((b, i) => cardHtml(b, i + 8)).join("")}</div>` : "";
   const moreBtn = fetched > 8 ? `<p><button type="button" class="btn-ghost" id="ccuc-more">Mostrar ${fetched - 8} más en Rastro</button></p>` : "";
   const more = res.total > fetched ? `<p class="section-note sub"><a href="${esc(official)}" target="_blank" rel="noopener">Ver los ${res.total} registros en la web oficial del CCUC</a></p>` : "";
-  box.innerHTML = counts + relNoteC + `<div class="cards">${res.items.slice(0, 8).map(cardHtml).join("")}</div>` + restDiv + moreBtn + more;
+  meta.innerHTML = counts + relNoteC;
+  box.innerHTML = res.items.slice(0, 8).map(cardHtml).join("");
+  after.innerHTML = restDiv + moreBtn + more;
   const moreBtnEl = $("#ccuc-more");
   if (moreBtnEl) moreBtnEl.addEventListener("click", () => {
     $("#ccuc-rest").hidden = false;
-    const cnt = box.querySelector('[data-count="ccuc"]');
+    const cnt = meta.querySelector('[data-count="ccuc"]');
     if (cnt) cnt.textContent = `Se muestran ${fetched} de ${res.total} ${res.total === 1 ? "registro" : "registros"}.`;
     moreBtnEl.closest("p").remove();
   });
