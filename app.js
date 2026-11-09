@@ -373,11 +373,13 @@ async function updateSubjectBlock(scarceArg) {
     }).sort((a, b) => subjCount[b] - subjCount[a]);
     harvestedBase = bases[0] || null;
     const probes = [];
-    if (harvestedBase) {
-      const bs = subjectSlug(harvestedBase);
-      if (fic) probes.push({ slug: bs + "_fiction", label: harvestedBase + " -- Fiction" });
-      if (juv) { probes.push({ slug: bs + "_juvenile_literature", label: harvestedBase + " -- Juvenile literature" }); probes.push({ slug: bs + "_juvenile_fiction", label: harvestedBase + " -- Juvenile fiction" }); }
-    }
+    /* Se prueban TODAS las bases cosechadas (la más frecuente puede ser un
+       qualificador como «personal narratives» sin subdivisión de ficción). */
+    bases.slice(0, 3).forEach((hb) => {
+      const bs = subjectSlug(hb);
+      if (fic) probes.push({ slug: bs + "_fiction", label: hb + " -- Fiction" });
+      if (juv) { probes.push({ slug: bs + "_juvenile_literature", label: hb + " -- Juvenile literature" }); probes.push({ slug: bs + "_juvenile_fiction", label: hb + " -- Juvenile fiction" }); }
+    });
     if (fic) probes.push({ slug: baseSlug + "_fiction", label: best.name + " -- Fiction" });
     if (juv) { probes.push({ slug: baseSlug + "_juvenile_literature", label: best.name + " -- Juvenile literature" }); probes.push({ slug: baseSlug + "_juvenile_fiction", label: best.name + " -- Juvenile fiction" }); }
     for (const pr of probes) {
@@ -392,13 +394,24 @@ async function updateSubjectBlock(scarceArg) {
   if (juv) { const f = works.filter((w) => (w.subject || []).some((x) => /juvenil|children/i.test(x))); if (f.length) works = f; else filtered = false; }
   if (!works.length) return;
 
-  /* CCUC con la misma materia (LCSH en inglés es lo habitual en su SRU). */
-  const ccucWords = (harvestedBase || best.name).replace(/--/g, " ") + (fic ? " Fiction" : juv ? " Juvenile literature" : "");
+  /* CCUC con la materia ELEGIDA y verificada (LCSH en inglés en su SRU). */
+  const ccucWords = chosenLabel.replace(/--/g, " ").replace(/[,.;:]/g, " ").replace(/\s+/g, " ").trim();
   const ccuc = await queryCCUCSubject(ccucWords).catch(() => null);
 
   /* Render */
   const note = $("#subject-note"), cardsBox = $("#subject-cards"), ccucBox = $("#subject-ccuc");
-  const shown = works.slice(0, 6);
+  /* Con condición de autoría se verifica un pool mayor y se ordena:
+     primero las que cumplen la condición verificada, después las no
+     verificadas y al final las que no la cumplen (nunca se ocultan). */
+  let shown = works.slice(0, 6);
+  let genderMap = null;
+  if (gender) {
+    const pool = works.slice(0, 12);
+    const gs = await Promise.all(pool.map((w) => authorGenderViaOL((w.authors || [])[0])));
+    genderMap = new Map(pool.map((w, i) => [w.key, gs[i]]));
+    const rank = (w) => { const g = genderMap.get(w.key); return g === gender ? 0 : g === null ? 1 : 2; };
+    shown = [...pool].sort((a, b) => rank(a) - rank(b)).slice(0, 6);
+  }
   const prettyLabel = chosenLabel.replace(/,\s*/g, ", ").replace(/\s*--\s*/g, " › ");
   note.innerHTML = `La búsqueda por palabras da poco. Estas obras llevan en su registro la materia <strong>«${esc(prettyLabel)}»</strong>, asignada por el catálogo (Open Library), no interpretada por Rastro.` +
     (filtered ? "" : ` No todas llevan la subdivisión de ficción o público: se muestran las del tema.`);
@@ -445,8 +458,7 @@ async function updateSubjectBlock(scarceArg) {
       ? "Verificando la autoría mujer en Wikidata…"
       : "Verificando la autoría varón en Wikidata…";
     note.after(gNote);
-    const results = await Promise.all(shown.map(async (w) =>
-      authorGenderViaOL((w.authors || [])[0])));
+    const results = shown.map((w) => genderMap.has(w.key) ? genderMap.get(w.key) : null);
     results.forEach((g, i) => {
       const el = cardsBox.querySelector(`[data-gbadge="${i}"]`);
       if (!el) return;
@@ -454,9 +466,13 @@ async function updateSubjectBlock(scarceArg) {
       else if (g) { el.textContent = (g === "female" ? "autora mujer" : "autor varón") + " · Wikidata (vía Open Library)"; el.classList.add("badge-pending"); }
       else { el.textContent = "autoría no verificada"; el.classList.add("badge-pending"); }
     });
-    const okCount = results.filter((g) => g === gender).length;
+    const poolN = genderMap.size;
+    const okPool = [...genderMap.values()].filter((g) => g === gender).length;
     const gWord = gender === "female" ? "mujer" : "varón";
-    gNote.innerHTML = `Autoría ${gWord}: <strong>${okCount} de ${shown.length} verificadas</strong>. Verificación: la ficha de Open Library enlaza al registro de la persona en Wikidata y se comprueba su propiedad sexo/género. Sin ese enlace no se afirma nada: queda marcada como no verificada.`;
+    const metodo = " Verificación: la ficha de Open Library enlaza al registro de la persona en Wikidata y se comprueba su propiedad sexo/género; sin ese enlace queda marcada como no verificada.";
+    gNote.innerHTML = okPool > 0
+      ? `Autoría ${gWord}: <strong>${okPool} de ${poolN} obras del tema verificadas</strong>; se muestran primero las que la cumplen.${metodo}`
+      : `Autoría ${gWord}: <strong>ninguna verificada entre las ${poolN} primeras obras del tema</strong>; se muestran obras del tema con su estado, sin afirmar lo no verificado.${metodo}`;
   }
 }
 
@@ -1200,7 +1216,10 @@ function sourceErrorInfo(e) {
   const m = /HTTP (\d+)/.exec((e && e.message) || "");
   if (m) return { kind: "http", status: +m[1] };
   if (/diagnostic/i.test((e && e.message) || "")) return { kind: "invalid" };
-  return { kind: "network" };
+  /* Un error desconocido no prueba que no haya conexión: solo se afirma
+     «sin conexión» si el propio navegador lo indica. */
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return { kind: "network" };
+  return { kind: "unknown" };
 }
 function sourceErrorText(info, name, link) {
   const causa = info.kind === "timeout"
@@ -1215,7 +1234,9 @@ function sourceErrorText(info, name, link) {
             ? `El catálogo ha respondido con un error (HTTP ${info.status}).`
             : info.kind === "invalid"
               ? "El catálogo ha respondido, pero con un formato que Rastro no ha sabido interpretar."
-              : "No se ha podido conectar con el catálogo (red interrumpida o bloqueo del navegador).";
+              : info.kind === "network"
+                ? "No hay conexión a internet en este momento (lo indica el propio navegador)."
+                : "La consulta al catálogo ha fallado por una causa que Rastro no ha podido identificar (no consta timeout, código de error ni formato inválido).";
   return `${causa} Esto NO significa que no tenga registros: <a href="${esc(link)}" target="_blank" rel="noopener">busca directamente en la web oficial de ${esc(name)}</a>.`;
 }
 
@@ -1229,9 +1250,9 @@ async function queryAllLibs(raw, isbn) {
          Las coincidencias amplias por campos ajenos NO son resultados. */
       const pertinent = isbn ? r.items : r.items.filter((b) => pertinentHit(clean, b.title + " " + b.authors.join(" ")));
       if (!isbn && r.total > 0 && r.items.length && !pertinent.length) {
-        setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}, 0 pertinentes`, "ok");
+        setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}, sin coincidencia clara`, "ok");
       } else if (!isbn && pertinent.length < r.items.length) {
-        setChip(s.id, `${s.chip}: ${pertinent.length} ${pertinent.length === 1 ? "pertinente" : "pertinentes"} de ${r.total}`, "ok");
+        setChip(s.id, `${s.chip}: ${pertinent.length} con coincidencia clara de ${r.total}`, "ok");
       } else {
         setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}`, "ok");
       }
@@ -1240,7 +1261,8 @@ async function queryAllLibs(raw, isbn) {
       const info = sourceErrorInfo(e);
       const motivo = info.kind === "timeout" ? "no responde en 12 s" :
         info.kind === "http" ? `error HTTP ${info.status}` :
-        info.kind === "invalid" ? "respuesta no interpretable" : "sin conexión";
+        info.kind === "invalid" ? "respuesta no interpretable" :
+        info.kind === "network" ? "sin conexión a internet" : "error no identificado";
       setChip(s.id, `${s.chip}: ${motivo}`, "warn");
       return { src: s, total: 0, items: [], error: true, errorInfo: info };
     }
@@ -1262,7 +1284,7 @@ function renderLibs(results) {
     }
     const showItems = r.pertinent || r.items;
     if (r.pertinent && !r.pertinent.length && r.total > 0) {
-      const nota = `El catálogo devuelve ${r.total} ${r.total === 1 ? "registro" : "registros"} por coincidencia amplia de palabras, pero ninguno de los recuperados coincide con el tema en título o autor: su pertinencia no está confirmada y no se presentan como resultados. <a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial de ${esc(r.src.chip)}</a>`;
+      const nota = `El catálogo devuelve ${r.total} ${r.total === 1 ? "registro" : "registros"} por coincidencia amplia de palabras, pero ninguno de los recuperados coincide claramente con el tema en título o autor (filtro léxico: la pertinencia no está confirmada ni descartada, y no se presentan como resultados). <a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial de ${esc(r.src.chip)}</a>`;
       return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
     }
     const qNorm = normTxt(state.isbn || state.query);
@@ -1856,7 +1878,7 @@ function renderCCUC(res) {
     return;
   }
   if (res && res.pertinent && !res.pertinent.length && res.items.length) {
-    meta.innerHTML = `<p class="empty-note">El CCUC devuelve ${res.total} registros por coincidencia amplia de palabras, pero ninguno de los recuperados coincide con el tema en título o autor: su pertinencia no está confirmada y no se presentan como resultados. <a href="${esc(official)}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial del CCUC</a></p>`;
+    meta.innerHTML = `<p class="empty-note">El CCUC devuelve ${res.total} registros por coincidencia amplia de palabras, pero ninguno de los recuperados coincide claramente con el tema en título o autor (filtro léxico: la pertinencia no está confirmada ni descartada, y no se presentan como resultados). <a href="${esc(official)}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial del CCUC</a></p>`;
     return;
   }
   if (!res || !res.items.length) {
@@ -2111,9 +2133,9 @@ $("#search-form").addEventListener("submit", async (e) => {
       }
       const pertinent = state.isbn ? r.items : r.items.filter((b) => pertinentHit(q, b.title + " " + b.authors.join(" ")));
       if (!state.isbn && r.total > 0 && r.items.length && !pertinent.length) {
-        setChip("ccuc", `CCUC: ${r.total} registros, 0 pertinentes`, "ok");
+        setChip("ccuc", `CCUC: ${r.total} registros, sin coincidencia clara`, "ok");
       } else if (!state.isbn && pertinent.length < r.items.length) {
-        setChip("ccuc", `CCUC: ${pertinent.length} pertinentes de ${r.total}`, "ok");
+        setChip("ccuc", `CCUC: ${pertinent.length} con coincidencia clara de ${r.total}`, "ok");
       } else {
         setChip("ccuc", `CCUC: ${r.total} registros${byTitle ? " (por título)" : ""}`, "ok");
       }
@@ -2122,7 +2144,8 @@ $("#search-form").addEventListener("submit", async (e) => {
       const info = sourceErrorInfo(e);
       const motivo = info.kind === "timeout" ? "no responde en 12 s" :
         info.kind === "http" ? `error HTTP ${info.status}` :
-        info.kind === "invalid" ? "respuesta no interpretable" : "sin conexión";
+        info.kind === "invalid" ? "respuesta no interpretable" :
+        info.kind === "network" ? "sin conexión a internet" : "error no identificado";
       setChip("ccuc", `CCUC: ${motivo}`, "warn");
       return { total: 0, items: [], error: true, errorInfo: info };
     }
