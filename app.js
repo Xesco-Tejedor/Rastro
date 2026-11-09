@@ -220,6 +220,26 @@ function droppedIntentWords(raw, clean) {
   return [...new Set(sigTokens(raw).filter((t) => INTENT_WORDS.has(t) && !kept.has(t)))];
 }
 
+/* Pertinencia de una ficha frente a la consulta activa: términos de
+   contenido en título o autor. Se retiran palabras de formato/intención
+   (libro, novela, autor, niños...) y enlaces (para, sobre...): con una
+   sola palabra común no basta cuando la consulta aporta 4+ términos
+   («Little Women» no trata de la guerra civil por contener «women»).
+   Sin términos medibles no se filtra. */
+const PERT_STOP = new Set([...INTENT_WORDS, "libro", "libros", "novela", "novelas", "obra", "obras", "autor", "autora", "autores", "autoras", "escritor", "escritora", "escrito", "escrita", "escritos", "escritas", "lectura", "leer", "para", "sobre", "como", "entre", "desde", "donde", "cuando", "años", "anos", "edad", "niños", "ninos", "niñas", "ninas", "infantil", "infantiles", "juvenil", "juveniles", "por", "del", "los", "las", "una", "uno", "book", "books", "novel", "novels", "author", "authors", "writer", "writers", "written", "about", "children", "child", "kids", "with", "from", "that", "this", "the", "and", "for"]);
+function pertinenceTerms(q) {
+  return normTxt(q).split(/[^a-z0-9áéíóúüñ]+/).filter((t) => t.length >= 3 && !PERT_STOP.has(t));
+}
+function pertinentHit(query, hayRaw) {
+  const terms = pertinenceTerms(query);
+  if (!terms.length) return true;
+  const hay = normTxt(hayRaw);
+  /* Raíz de 5 letras para familia morfológica y cambio de idioma cercano
+     («victorianas» casa con «Victorian», «mujeres» con «mujer»). */
+  const hits = terms.filter((t) => hay.includes(t) || (t.length >= 5 && hay.includes(t.slice(0, 5)))).length;
+  return hits >= (terms.length >= 4 ? 2 : 1);
+}
+
 /* Cobertura de contenido (guardrail de conservación): una expansión
    generada (tema de Wikipedia, materia OL) solo se propone si conserva
    TODOS los términos de contenido de la consulta limpia; «Joya» no es
@@ -1352,8 +1372,12 @@ function renderFree(olBooks, iaDocs, filteredFree, L) {
     known = new Set(filteredFree.map((b) => b.ia[0]));
   } else {
   const withAccess = olBooks.filter((b) => b.ia && b.ia.length && (b.ebookAccess === "public" || b.ebookAccess === "borrowable"));
+  /* Sin filtro de idioma, Open Library empareja de forma aproximada
+     (descripción o metadatos): solo se ofrecen como lectura las fichas
+     pertinentes en título o autor, nunca coincidencias vagas. */
+  const pertinent = state.isbn ? withAccess : withAccess.filter((b) => pertinentHit(state.query, b.title + " " + b.authors.join(" ")));
   let html = "";
-  withAccess.slice(0, 8).forEach((b) => {
+  pertinent.slice(0, 8).forEach((b) => {
     const mode = b.ebookAccess === "public"
       ? "Lectura en línea · Archive.org"
       : "Préstamo con cuenta gratuita · disponibilidad por comprobar en la ficha · Archive.org";
@@ -1367,7 +1391,7 @@ function renderFree(olBooks, iaDocs, filteredFree, L) {
     </div>`;
   });
   box.innerHTML = html || '<p class="empty-note">No se ha confirmado acceso gratuito (lectura o préstamo) para esta búsqueda en Open Library / Archive.org.</p>';
-  known = new Set(withAccess.flatMap((b) => b.ia));
+  known = new Set(pertinent.flatMap((b) => b.ia));
   }
 
   /* Hallazgos de Archive.org sin disponibilidad confirmada: separados y
@@ -1463,6 +1487,10 @@ function renderCdl(res, L) {
 function renderCatalog(olBooks, gbBooks, gbError, editionCards, unconfirmed, L) {
   const box = $("#catalog-cards");
   const src = editionCards || olBooks;
+  /* Coincidencia aproximada de Open Library (descripción o metadatos):
+     se muestran las fichas, pero explicado, nunca como éxito. */
+  const relOL = $("#catalog-rel");
+  if (relOL) relOL.hidden = !(!state.isbn && src.length && !src.slice(0, 4).some((b) => pertinentHit(state.query, b.title + " " + b.authors.join(" "))));
   let html = src.slice(0, 12).map((b, i) => `
     <div class="card" data-ol="${i}">
       ${b.cover ? `<img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
@@ -1793,7 +1821,7 @@ $("#search-form").addEventListener("submit", async (e) => {
     const withAccess = await Promise.all(
       iaCandidates.slice(0, 8).map(async (e) => ({ ...e, access: await iaAccess(e.ia[0]).catch(() => "borrowable") }))
     );
-    filteredFree = withAccess;
+    filteredFree = state.isbn ? withAccess : withAccess.filter((b) => pertinentHit(raw, b.title + " " + b.authors.join(" ")));
   }
 
   renderFree(ol, ia, filteredFree, L);
