@@ -349,12 +349,34 @@ async function updateSubjectBlock(scarceArg) {
   const fic = FICTION_RE.test(raw), juv = JUVENILE_RE.test(raw);
   const gender = GENDER_FEM_RE.test(raw) ? "female" : (GENDER_MALE_RE.test(raw) ? "male" : null);
 
-  let sug;
-  try { sug = await fetchJson(`https://openlibrary.org/search/subjects.json?q=${encodeURIComponent(topicToks.join(" "))}`); }
-  catch { return; }
-  const cands = (sug.docs || []).filter((d) => d.name && (d.work_count || 0) > 5);
+  /* Singular/plural: la etiqueta en inglés puede salir en singular
+     («dinosaur») y la búsqueda de materias desordena el ranking; se
+     prueban ambas formas y se elige la materia que cubre el tema con
+     más obras registradas, no la primera de la lista. */
+  const skelT = (x) => x.replace(/[aeiou]/g, "");
+  const tokEqT = (t, u) => skelT(u).startsWith(skelT(t).slice(0, 3)) || skelT(t).startsWith(skelT(u).slice(0, 3));
+  const qForms = [topicToks.join(" ")];
+  topicToks.forEach((t, i) => {
+    const v = [...topicToks];
+    v[i] = t.endsWith("s") ? t.replace(/s$/, "") : t + "s";
+    if (v[i] !== t) qForms.push(v.join(" "));
+  });
+  const seenN = new Set();
+  let cands = [];
+  for (const q of qForms.slice(0, 3)) {
+    try {
+      const sug = await fetchJson(`https://openlibrary.org/search/subjects.json?q=${encodeURIComponent(q)}`);
+      (sug.docs || []).forEach((d) => {
+        if (d.name && (d.work_count || 0) > 5 && !seenN.has(d.name)) { seenN.add(d.name); cands.push(d); }
+      });
+    } catch { /* una forma fallida no anula las demás */ }
+  }
   if (!cands.length) return;
-  const best = cands[0];
+  const covering = cands.filter((d) => {
+    const nt = sigTokens(d.name);
+    return topicToks.every((t) => nt.some((u) => tokEqT(t, u)));
+  });
+  const best = (covering.length ? covering : cands).sort((a, b) => (b.work_count || 0) - (a.work_count || 0))[0];
   const baseSlug = subjectSlug(best.name);
 
   /* Materia específica por intención: se cosechan las materias de las
