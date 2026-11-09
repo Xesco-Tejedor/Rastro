@@ -269,8 +269,14 @@ async function olSubjectWorks(slug, limit) {
 async function wikidataGender(name) {
   try {
     const s = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=es&uselang=es&format=json&origin=*&limit=3`);
+    const nm = normTxt(name), nmParts = nm.split(" ");
+    const nameMatch = (lbl) => {
+      const l = normTxt(lbl || "");
+      return l === nm || (l && (nm.startsWith(l) || l.startsWith(nm))) ||
+        (nmParts.length >= 2 && l.includes(nmParts[0]) && l.includes(nmParts[nmParts.length - 1]));
+    };
     const cand = (s.search || []).find((c) =>
-      normTxt(c.label || "") === normTxt(name) &&
+      nameMatch(c.label) &&
       /escritor|poeta|novelista|autor|writer|poet|novelist|author|dramaturg|guionista/i.test(c.description || ""));
     if (!cand) return null;
     const c = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${cand.id}&property=P21&format=json&origin=*`);
@@ -317,11 +323,17 @@ async function updateSubjectBlock(scarceArg) {
   const enFromGloss = englishVariant(clean);
   const variantIsEn = state.variantLabel && /ingl[eé]s/i.test(state.variantLabel);
   let topicText = enFromGloss || (variantIsEn ? clean : null);
-  if (!topicText) {
+  /* Términos de tema: se retiran formato, intención y restricciones de
+     autoría ANTES de buscar el tema canónico (si no, Wikipedia resuelve
+     «novelas ... escritas por mujeres» como «novela rosa»). */
+  const topicToksPre = sigTokens(clean).filter((t) =>
+    !PERT_STOP.has(t) && !FICTION_RE.test(t) && !JUVENILE_RE.test(t) &&
+    !GENDER_FEM_RE.test(t) && !GENDER_MALE_RE.test(t) && !INTENT_WORDS.has(t));
+  if (!topicText && topicToksPre.length) {
     /* Puente Wikipedia: tema canónico en español -> título en inglés
        («guerra civil española» -> «Spanish Civil War»), verificado por
        el propio Wikipedia (langlinks). */
-    const wiki = await wikipediaTopicVariants(clean).catch(() => null);
+    const wiki = await wikipediaTopicVariants(topicToksPre.join(" ")).catch(() => null);
     topicText = wiki && wiki.enTitle;
   }
   if (!topicText) return;
