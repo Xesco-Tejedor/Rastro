@@ -1742,13 +1742,17 @@ $("#search-form").addEventListener("submit", async (e) => {
     const hay = normTxt(get(b));
     return vq.some((t) => hay.includes(t));
   });
-  let pertinentSrc = 0;
-  if (ol.length) pertinentSrc++;
-  if ((cdl.total || 0) > 0 && titleHit(cdl.items, (b) => b.name + " " + b.authors.join(" "))) pertinentSrc++;
-  if ((ccuc.total || 0) > 0 && titleHit(ccuc.items, (b) => b.title + " " + b.authors.join(" "))) pertinentSrc++;
+  /* Escaso = muy pocos resultados pertinentes en conjunto (los totales de
+     coincidencia amplia, como los 50 de LoC para esta consulta, no cuentan
+     como resultado útil: solo suman fuentes con coincidencia clara en
+     título/autor entre sus primeras fichas). Con más de 3 pertinentes no
+     se ofrecen variantes. */
+  let pertinentItems = ol.length;
+  if ((cdl.total || 0) > 0 && titleHit(cdl.items, (b) => b.name + " " + b.authors.join(" "))) pertinentItems += cdl.total;
+  if ((ccuc.total || 0) > 0 && titleHit(ccuc.items, (b) => b.title + " " + b.authors.join(" "))) pertinentItems += ccuc.total;
   libs.forEach((r) => {
-    if (!r.error && (r.total || 0) > 0 && titleHit(r.items, (b) => b.title + " " + b.authors.join(" "))) pertinentSrc++;
+    if (!r.error && (r.total || 0) > 0 && titleHit(r.items, (b) => b.title + " " + b.authors.join(" "))) pertinentItems += r.total;
   });
-  updateVariantsBlock(pertinentSrc === 0).catch(() => {});
+  updateVariantsBlock(pertinentItems <= 3).catch(() => {});
   $("#search-btn").disabled = false;
 });
