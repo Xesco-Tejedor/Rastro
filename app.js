@@ -201,6 +201,87 @@ function applySynonym(raw, token, syn) {
   return out;
 }
 
+/* Raíz comparativa de 5 letras para solape léxico sin morfología
+   compleja (veganismo~vegana, joya~joyas). */
+function stem5(t) { return t.slice(0, 5); }
+function stemsOverlap(aToks, bToks) {
+  /* Solape por prefijo común (min. 4 caracteres): joya~joyas, vegan~*. */
+  return aToks.some((a) => bToks.some((b) => {
+    const n = Math.min(a.length, b.length, 5);
+    return n >= 4 && a.slice(0, n) === b.slice(0, n);
+  }));
+}
+
+/* Andamiaje de pregunta natural: se retira solo lo que no aporta tema
+   (quiero/busco/libros sobre...). Nunca se inventa intención: la
+   variante son los propios términos del usuario, aligerados. */
+function cleanedQuery(raw) {
+  let q = " " + raw.toLowerCase().replace(/[¿?¡!.,;:]+/g, " ") + " ";
+  const SCAFF = [
+    " quiero ", " quisiera ", " busco ", " necesito ", " encuentra ", " encontrar ",
+    " dime ", " dame ", " recomiéndame ", " recomiendame ", " cómo ", " como ",
+    " qué ", " que ", " dónde ", " donde ", " hay ", " algún ", " alguna ",
+    " libros de ", " libros sobre ", " libros para ", " libro de ", " libro sobre ",
+    " novelas de ", " novelas sobre ", " novela de ", " novela sobre ",
+    " ensayos de ", " ensayos sobre ", " ensayo de ", " ensayo sobre ",
+    " obras de ", " obras sobre ", " lecturas de ", " lecturas sobre ",
+    " aprender a ", " aprender ", " introducción a ", " introduccion a ",
+    " me gustaría ", " me gustaria ", " puedes ", " puedo ",
+  ];
+  SCAFF.forEach((p) => { q = q.split(p).join(" "); });
+  q = q.replace(/\s+/g, " ").trim().replace(/^(la|el|los|las|the)\s+/i, "");
+  return q && q !== raw.toLowerCase().trim() && sigTokens(q).length ? q : null;
+}
+
+/* Tema canónico con Wikipedia (mismo operador y API que la Wikisource que
+   Rastro ya consulta): el buscador de artículos acepta lenguaje natural y
+   sus títulos son términos canónicos de tema para cualquier dominio.
+   Solo se aceptan títulos con solape léxico con la consulta: sin solape,
+   preferimos silencio a ruido. Devuelve también el equivalente inglés
+   (langlink) del primer tema aceptado. */
+async function wikipediaTopicVariants(raw) {
+  const topics = [];
+  let enTitle = null;
+  try {
+    const d = await fetchJson(`https://es.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(raw)}&srnamespace=0&srlimit=4&format=json&origin=*`);
+    const qToks = sigTokens(raw);
+    for (const h of ((d.query && d.query.search) || [])) {
+      const clean = (h.title || "").replace(/\s*\(.*\)\s*$/, "").trim();
+      const tToks = sigTokens(clean);
+      if (!tToks.length) continue;
+      if (!stemsOverlap(qToks, tToks) && !normTxt(raw).includes(normTxt(clean))) continue;
+      topics.push(clean);
+      if (topics.length >= 2) break;
+    }
+    if (topics.length) {
+      const ll = await fetchJson(`https://es.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(topics[0])}&prop=langlinks&lllang=en&format=json&origin=*&redirects=1`);
+      const pages = (ll.query && ll.query.pages) || {};
+      for (const k of Object.keys(pages)) {
+        const l = pages[k].langlinks && pages[k].langlinks[0];
+        if (l && l["*"]) { enTitle = l["*"].replace(/\s*\(.*\)\s*$/, "").trim(); break; }
+      }
+    }
+  } catch { /* sin Wikipedia: el resto de fuentes de variantes sigue */ }
+  return { topics, enTitle };
+}
+
+/* Puerta de pertinencia: una variante solo se ofrece si Open Library
+   devuelve obras reales (>=3) y alguno de los primeros títulos contiene
+   un término de la variante. No se ofrecen reformulaciones que no
+   recuperan libros de su tema. */
+async function variantGate(text) {
+  try {
+    const d = await fetchJson(`https://openlibrary.org/search.json?q=${encodeURIComponent(text)}&fields=title&limit=3`);
+    if ((d.numFound || 0) < 3) return false;
+    const stems = sigTokens(text).map(stem5);
+    if (!stems.length) return true;
+    return (d.docs || []).slice(0, 3).some((doc) => {
+      const t = normTxt(doc.title || "");
+      return stems.some((st) => t.includes(st));
+    });
+  } catch { return false; }
+}
+
 /* Materias reales del catálogo de Open Library relacionadas con la
    consulta (o con alguno de sus términos si la consulta entera no da). */
 async function subjectVariants(raw, limit = 2) {
@@ -249,25 +330,32 @@ async function updateVariantsBlock(scarceArg) {
   const items = [];
   const seen = new Set([normTxt(raw)]);
   if (state.original && normTxt(state.original.query) !== normTxt(raw)) seen.add(normTxt(state.original.query));
+  const push = (v) => { if (v && v.text && !seen.has(normTxt(v.text))) { seen.add(normTxt(v.text)); items.push(v); } };
+
+  /* Recolección en paralelo: glosario verificado, Wikipedia (tema canónico
+     de cualquier dominio + equivalente inglés), materias OL, limpieza de
+     andamiaje. Después, puerta de pertinencia para todos. */
   const en = englishVariant(raw);
-  if (en && !seen.has(normTxt(en))) {
-    seen.add(normTxt(en));
-    items.push({ text: en, label: "en inglés · todos los idiomas", lang: "all" });
-  }
+  const wikiP = wikipediaTopicVariants(raw);
+  const subsP = subjectVariants(raw);
+  if (en) push({ text: en, label: "en inglés · todos los idiomas", lang: "all" });
   for (const t of sigTokens(raw)) {
     for (const syn of (GLOSS_SYN[t] || [])) {
-      const v = applySynonym(raw, t, syn);
-      if (v && !seen.has(normTxt(v))) { seen.add(normTxt(v)); items.push({ text: v, label: "sinónimo" }); }
-      if (items.length >= 3) break;
+      push({ text: applySynonym(raw, t, syn), label: "sinónimo" });
     }
-    if (items.length >= 3) break;
   }
-  const subs = await subjectVariants(raw);
-  subs.forEach((nm) => {
-    if (!seen.has(normTxt(nm))) { seen.add(normTxt(nm)); items.push({ text: nm, label: "materia de Open Library" }); }
-  });
-  if (L) items.push({ text: raw, label: "la misma consulta sin filtro de idioma", lang: "all" });
-  const top = items.slice(0, 5);
+  const cq = cleanedQuery(raw);
+  if (cq) push({ text: cq, label: "términos clave" });
+  const [wiki, subs] = await Promise.all([wikiP, subsP]);
+  wiki.topics.forEach((t) => push({ text: t, label: "tema de Wikipedia" }));
+  if (wiki.enTitle) push({ text: wiki.enTitle, label: "en inglés · todos los idiomas", lang: "all" });
+  subs.forEach((nm) => push({ text: nm, label: "materia de Open Library" }));
+
+  /* Puerta de pertinencia en paralelo: solo chips que recuperan libros. */
+  const gated = await Promise.all(items.map(async (v) => (await variantGate(v.text)) ? v : null));
+  const passed = gated.filter(Boolean);
+  if (L) passed.push({ text: raw, label: "la misma consulta sin filtro de idioma", lang: "all" });
+  const top = passed.slice(0, 5);
   if (state.original) {
     const o = state.original;
     const langDiff = o.lang !== state.lang ? `, con idioma ${o.lang === "all" ? "todos" : LANGS[o.lang].label}` : "";
