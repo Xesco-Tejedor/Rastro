@@ -266,20 +266,20 @@ async function olSubjectWorks(slug, limit) {
   const d = await fetchJson(`https://openlibrary.org/subjects/${encodeURIComponent(slug)}.json?limit=${limit || 60}`);
   return (d && d.works) || [];
 }
-async function wikidataGender(name) {
+/* Identidad de autoría sin adivinar: la ficha de la obra en Open Library
+   enlaza a su registro de autor, y ese registro enlaza a Wikidata
+   (remote_ids.wikidata). Solo con esa cadena fuente se lee la propiedad
+   sexo/género (P21) del registro de la persona. Sin enlace no se afirma
+   nada: ni búsqueda por nombre ni coincidencias aproximadas, porque un
+   homónimo etiquetaría mal a la persona. */
+const olAuthorCache = {};
+async function authorGenderViaOL(a) {
+  if (!a || !a.key) return null;
   try {
-    const s = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=es&uselang=es&format=json&origin=*&limit=3`);
-    const nm = normTxt(name), nmParts = nm.split(" ");
-    const nameMatch = (lbl) => {
-      const l = normTxt(lbl || "");
-      return l === nm || (l && (nm.startsWith(l) || l.startsWith(nm))) ||
-        (nmParts.length >= 2 && l.includes(nmParts[0]) && l.includes(nmParts[nmParts.length - 1]));
-    };
-    const cand = (s.search || []).find((c) =>
-      nameMatch(c.label) &&
-      /escritor|poeta|novelista|autor|writer|poet|novelist|author|dramaturg|guionista/i.test(c.description || ""));
-    if (!cand) return null;
-    const c = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${cand.id}&property=P21&format=json&origin=*`);
+    const rec = olAuthorCache[a.key] || (olAuthorCache[a.key] = await fetchJson(`https://openlibrary.org${a.key}.json`));
+    const qid = rec && rec.remote_ids && rec.remote_ids.wikidata;
+    if (!qid || !/^Q\d+$/.test(qid)) return null;
+    const c = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${qid}&property=P21&format=json&origin=*`);
     const v = ((c.claims || {}).P21 || [])[0];
     const id = v && v.mainsnak && v.mainsnak.datavalue && v.mainsnak.datavalue.value && v.mainsnak.datavalue.value.id;
     return id === "Q6581072" ? "female" : id === "Q6581097" ? "male" : null;
@@ -395,7 +395,7 @@ async function updateSubjectBlock(scarceArg) {
 
   /* Render */
   const note = $("#subject-note"), cardsBox = $("#subject-cards"), ccucBox = $("#subject-ccuc");
-  const shown = works.slice(0, 8);
+  const shown = works.slice(0, 6);
   const prettyLabel = chosenLabel.replace(/,\s*/g, ", ").replace(/\s*--\s*/g, " › ");
   note.innerHTML = `La búsqueda por palabras da poco. Estas obras llevan en su registro la materia <strong>«${esc(prettyLabel)}»</strong>, asignada por el catálogo (Open Library), no interpretada por Rastro.` +
     (filtered ? "" : ` No todas llevan la subdivisión de ficción o público: se muestran las del tema.`);
@@ -421,7 +421,7 @@ async function updateSubjectBlock(scarceArg) {
   if (ccuc && ccuc.total > 0) {
     const official = `https://ccuc.csuc.cat/discovery/search?query=lsr02,contains,${encodeURIComponent(ccucWords)}&vid=${CCUC_VID}&lang=es`;
     ccucBox.innerHTML = `<p class="section-note sub">En el CCUC (universidades catalanas, Biblioteca de Catalunya y CSUC), <a href="${esc(official)}" target="_blank" rel="noopener">${ccuc.total} registros con esa materia</a>:</p>
-      <div class="cards">${ccuc.items.slice(0, 6).map((b) => `
+      <div class="cards">${ccuc.items.slice(0, 4).map((b) => `
         <div class="card" data-ccu="${esc(b.url)}">
           <h3>${esc(b.title)}</h3>
           <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
@@ -442,21 +442,18 @@ async function updateSubjectBlock(scarceArg) {
       ? "Verificando la autoría mujer en Wikidata…"
       : "Verificando la autoría varón en Wikidata…";
     note.after(gNote);
-    const results = await Promise.all(shown.map(async (w) => {
-      const a = (w.authors || [])[0];
-      return a && a.name ? await wikidataGender(a.name) : null;
-    }));
+    const results = await Promise.all(shown.map(async (w) =>
+      authorGenderViaOL((w.authors || [])[0])));
     results.forEach((g, i) => {
       const el = cardsBox.querySelector(`[data-gbadge="${i}"]`);
       if (!el) return;
-      if (g === gender) { el.textContent = gender === "female" ? "autora mujer · verificado en Wikidata" : "autor varón · verificado en Wikidata"; el.classList.add("badge-free"); }
-      else if (g) { el.textContent = (g === "female" ? "autora mujer" : "autor varón") + " · Wikidata"; el.classList.add("badge-pending"); }
+      if (g === gender) { el.textContent = gender === "female" ? "autora mujer · Wikidata (vía Open Library)" : "autor varón · Wikidata (vía Open Library)"; el.classList.add("badge-free"); }
+      else if (g) { el.textContent = (g === "female" ? "autora mujer" : "autor varón") + " · Wikidata (vía Open Library)"; el.classList.add("badge-pending"); }
       else { el.textContent = "autoría no verificada"; el.classList.add("badge-pending"); }
     });
     const okCount = results.filter((g) => g === gender).length;
-    gNote.innerHTML = gender === "female"
-      ? `Autoría mujer: <strong>${okCount} de ${shown.length} verificadas en Wikidata</strong> (propiedad sexo/género del registro de la persona). Las demás quedan marcadas: no se afirma lo no verificado.`
-      : `Autoría varón: <strong>${okCount} de ${shown.length} verificados en Wikidata</strong>. Las demás quedan marcadas: no se afirma lo no verificado.`;
+    const gWord = gender === "female" ? "mujer" : "varón";
+    gNote.innerHTML = `Autoría ${gWord}: <strong>${okCount} de ${shown.length} verificadas</strong>. Verificación: la ficha de Open Library enlaza al registro de la persona en Wikidata y se comprueba su propiedad sexo/género. Sin ese enlace no se afirma nada: queda marcada como no verificada.`;
   }
 }
 
@@ -1195,8 +1192,18 @@ async function queryAllLibs(raw, isbn) {
   return Promise.all(LIB_SOURCES.map(async (s) => {
     try {
       const r = await s.query(clean, isbn);
-      setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}`, "ok");
-      return { src: s, total: r.total, items: r.items, error: false };
+      /* Pertinencia: una ficha solo se presenta como resultado si el tema
+         aparece en su título o autor (>=2 términos si la consulta tiene 4+).
+         Las coincidencias amplias por campos ajenos NO son resultados. */
+      const pertinent = isbn ? r.items : r.items.filter((b) => pertinentHit(clean, b.title + " " + b.authors.join(" ")));
+      if (!isbn && r.total > 0 && r.items.length && !pertinent.length) {
+        setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}, 0 pertinentes`, "ok");
+      } else if (!isbn && pertinent.length < r.items.length) {
+        setChip(s.id, `${s.chip}: ${pertinent.length} ${pertinent.length === 1 ? "pertinente" : "pertinentes"} de ${r.total}`, "ok");
+      } else {
+        setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}`, "ok");
+      }
+      return { src: s, total: r.total, items: r.items, pertinent, error: false };
     } catch (e) {
       const info = sourceErrorInfo(e);
       const motivo = info.kind === "timeout" ? "no responde en 12 s" :
@@ -1221,6 +1228,11 @@ function renderLibs(results) {
         : "Sin registros para esta búsqueda.";
       return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
     }
+    const showItems = r.pertinent || r.items;
+    if (r.pertinent && !r.pertinent.length && r.total > 0) {
+      const nota = `El catálogo devuelve ${r.total} ${r.total === 1 ? "registro" : "registros"} por coincidencia amplia de palabras, pero ninguno de los recuperados coincide con el tema en título o autor: su pertinencia no está confirmada y no se presentan como resultados. <a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial de ${esc(r.src.chip)}</a>`;
+      return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
+    }
     const qNorm = normTxt(state.isbn || state.query);
     const terms = qNorm.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3);
     const inTitle = (b) => {
@@ -1236,17 +1248,22 @@ function renderLibs(results) {
         <p class="meta">${esc(r.src.chip)} · disponibilidad y biblioteca concreta se confirman en la ficha enlazada</p>
         ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
       </div>`;
-    const fetched = r.items.length;
-    const first = r.items.slice(0, 4).map(cardHtml).join("");
-    const restHtml = fetched > 4 ? r.items.slice(4).map((b, i) => cardHtml(b, i + 4)).join("") : "";
+    const fetched = showItems.length;
+    const first = showItems.slice(0, 4).map(cardHtml).join("");
+    const restHtml = fetched > 4 ? showItems.slice(4).map((b, i) => cardHtml(b, i + 4)).join("") : "";
+    const filteredOut = r.pertinent && r.pertinent.length < r.items.length;
     const counts = `<p class="section-note sub" data-count="${r.src.id}">Se muestran ${Math.min(4, fetched)} de ${r.total} ${r.total === 1 ? "registro" : "registros"}.</p>`;
-    const relNote = (!state.isbn && terms.length && !r.items.slice(0, 4).some(inTitle))
+    const pertNote = filteredOut
+      ? `<p class="section-note sub">Solo se muestran las fichas pertinentes por título o autor; las demás coincidencias amplias se ven en la web oficial.</p>`
+      : "";
+    const relNote = (!state.isbn && !filteredOut && terms.length && !showItems.slice(0, 4).some(inTitle))
       ? `<p class="section-note sub">Los términos coinciden en la descripción u otros campos del registro, no en el título ni el autor.</p>`
       : "";
     const restDiv = fetched > 4 ? `<div class="cards" id="librest-${r.src.id}" hidden>${restHtml}</div>` : "";
     const moreBtn = fetched > 4 ? `<p><button type="button" class="btn-ghost lib-more" data-more="${r.src.id}">Mostrar ${fetched - 4} más en Rastro</button></p>` : "";
     const more = r.total > fetched ? `<p class="section-note sub"><a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver los ${r.total} registros en la web oficial de ${esc(r.src.chip)}</a></p>` : "";
-    return `<details class="lib-group" id="libgroup-${r.src.id}"><summary>${esc(r.src.name)} <span class="lib-total">${r.total} ${r.total === 1 ? "registro" : "registros"}</span></summary><p class="section-note sub">${esc(r.src.note)}</p>${counts}${relNote}<div class="cards">${first}</div>${restDiv}${moreBtn}${more}</details>`;
+    const summaryTotal = filteredOut ? `${fetched} ${fetched === 1 ? "pertinente" : "pertinentes"} de ${r.total}` : `${r.total} ${r.total === 1 ? "registro" : "registros"}`;
+    return `<details class="lib-group" id="libgroup-${r.src.id}"><summary>${esc(r.src.name)} <span class="lib-total">${summaryTotal}</span></summary><p class="section-note sub">${esc(r.src.note)}</p>${counts}${pertNote}${relNote}<div class="cards">${first}</div>${restDiv}${moreBtn}${more}</details>`;
   }).join("");
   box.querySelectorAll(".lib-more").forEach((btn) =>
     btn.addEventListener("click", () => {
@@ -1254,14 +1271,15 @@ function renderLibs(results) {
       if (rest) rest.hidden = false;
       const r = results.find((x) => x.src.id === btn.dataset.more);
       const cnt = box.querySelector(`[data-count="${btn.dataset.more}"]`);
-      if (cnt && r) cnt.textContent = `Se muestran ${r.items.length} de ${r.total} ${r.total === 1 ? "registro" : "registros"}.`;
+      const nShow = (r.pertinent || r.items).length;
+      if (cnt && r) cnt.textContent = `Se muestran ${nShow} de ${r.total} ${r.total === 1 ? "registro" : "registros"}.`;
       btn.closest("p").remove();
     }));
   box.querySelectorAll(".card[data-lib]").forEach((c) =>
     c.addEventListener("click", () => {
       const [sid, idx] = c.dataset.lib.split("-");
       const r = results.find((x) => x.src.id === sid);
-      const b = r && r.items[+idx];
+      const b = r && (r.pertinent || r.items)[+idx];
       if (b && b.url) window.open(b.url, "_blank", "noopener");
     }));
 }
@@ -1805,6 +1823,10 @@ function renderCCUC(res) {
     meta.innerHTML = `<p class="empty-note">${sourceErrorText(res.errorInfo || {}, "CCUC", official)}</p>`;
     return;
   }
+  if (res && res.pertinent && !res.pertinent.length && res.items.length) {
+    meta.innerHTML = `<p class="empty-note">El CCUC devuelve ${res.total} registros por coincidencia amplia de palabras, pero ninguno de los recuperados coincide con el tema en título o autor: su pertinencia no está confirmada y no se presentan como resultados. <a href="${esc(official)}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial del CCUC</a></p>`;
+    return;
+  }
   if (!res || !res.items.length) {
     meta.innerHTML = res && res.total === null
       ? '<p class="empty-note">El CCUC no se puede consultar por ISBN en esta versión (su zona de red no lo indexa). Prueba por título o autor.</p>'
@@ -1813,6 +1835,8 @@ function renderCCUC(res) {
         : '<p class="empty-note">El CCUC no ha devuelto registros para esta búsqueda.</p>');
     return;
   }
+  const ccucItems = res.pertinent || res.items;
+  const ccucFiltered = res.pertinent && res.pertinent.length < res.items.length;
   const cardHtml = (b, i) => `
     <div class="card" data-ccuc="${i}">
       <h3>${esc(b.title)}</h3>
@@ -1822,23 +1846,23 @@ function renderCCUC(res) {
       <p class="meta">Catálogo colectivo CCUC · las bibliotecas que lo tienen y su disponibilidad se confirman en la ficha enlazada</p>
       ${refBtn({ title: b.title, authors: b.authors, year: b.year, publisher: b.publisher, isbn: b.isbn, url: b.url, kind: "print" })}
     </div>`;
-  const fetched = res.items.length;
+  const fetched = ccucItems.length;
   const shown = Math.min(8, fetched);
-  const counts = `<p class="section-note sub" data-count="ccuc">Se muestran ${shown} de ${res.total} ${res.total === 1 ? "registro" : "registros"}.</p>`;
+  const counts = `<p class="section-note sub" data-count="ccuc">Se muestran ${shown} de ${res.total} ${res.total === 1 ? "registro" : "registros"}.</p>` + (ccucFiltered ? '<p class="section-note sub">Solo se muestran las fichas pertinentes por título o autor; las demás coincidencias amplias se ven en la web oficial.</p>' : "");
   const qNormC = normTxt(state.isbn || state.query);
   const termsC = qNormC.split(/[^a-z0-9áéíóúüñ]+/).filter((x) => x.length >= 3);
   const inTitleC = (b) => {
     const hay = normTxt(b.title + " " + b.authors.join(" "));
     return termsC.some((t) => hay.includes(t));
   };
-  const relNoteC = (!state.isbn && termsC.length && !res.items.slice(0, 8).some(inTitleC))
+  const relNoteC = (!state.isbn && !ccucFiltered && termsC.length && !ccucItems.slice(0, 8).some(inTitleC))
     ? `<p class="section-note sub">Los términos coinciden en la descripción u otros campos del registro, no en el título ni el autor.</p>`
     : "";
-  const restDiv = fetched > 8 ? `<div class="cards" id="ccuc-rest" hidden>${res.items.slice(8).map((b, i) => cardHtml(b, i + 8)).join("")}</div>` : "";
+  const restDiv = fetched > 8 ? `<div class="cards" id="ccuc-rest" hidden>${ccucItems.slice(8).map((b, i) => cardHtml(b, i + 8)).join("")}</div>` : "";
   const moreBtn = fetched > 8 ? `<p><button type="button" class="btn-ghost" id="ccuc-more">Mostrar ${fetched - 8} más en Rastro</button></p>` : "";
   const more = res.total > fetched ? `<p class="section-note sub"><a href="${esc(official)}" target="_blank" rel="noopener">Ver los ${res.total} registros en la web oficial del CCUC</a></p>` : "";
   meta.innerHTML = counts + relNoteC;
-  box.innerHTML = res.items.slice(0, 8).map(cardHtml).join("");
+  box.innerHTML = ccucItems.slice(0, 8).map(cardHtml).join("");
   after.innerHTML = restDiv + moreBtn + more;
   const moreBtnEl = $("#ccuc-more");
   if (moreBtnEl) moreBtnEl.addEventListener("click", () => {
@@ -1848,7 +1872,7 @@ function renderCCUC(res) {
     moreBtnEl.closest("p").remove();
   });
   box.querySelectorAll(".card[data-ccuc]").forEach((c) =>
-    c.addEventListener("click", () => { const b = res.items[+c.dataset.ccuc]; if (b && b.url) window.open(b.url, "_blank", "noopener"); }));
+    c.addEventListener("click", () => { const b = ccucItems[+c.dataset.ccuc]; if (b && b.url) window.open(b.url, "_blank", "noopener"); }));
 }
 
 function renderStores() {
@@ -2053,8 +2077,15 @@ $("#search-form").addEventListener("submit", async (e) => {
         setChip("ccuc", "CCUC: no consulta por ISBN; prueba por título o autor", "");
         return { total: null, items: [] };
       }
-      setChip("ccuc", `CCUC: ${r.total} registros${byTitle ? " (por título)" : ""}`, "ok");
-      return r;
+      const pertinent = state.isbn ? r.items : r.items.filter((b) => pertinentHit(q, b.title + " " + b.authors.join(" ")));
+      if (!state.isbn && r.total > 0 && r.items.length && !pertinent.length) {
+        setChip("ccuc", `CCUC: ${r.total} registros, 0 pertinentes`, "ok");
+      } else if (!state.isbn && pertinent.length < r.items.length) {
+        setChip("ccuc", `CCUC: ${pertinent.length} pertinentes de ${r.total}`, "ok");
+      } else {
+        setChip("ccuc", `CCUC: ${r.total} registros${byTitle ? " (por título)" : ""}`, "ok");
+      }
+      return { ...r, pertinent };
     } catch (e) {
       const info = sourceErrorInfo(e);
       const motivo = info.kind === "timeout" ? "no responde en 12 s" :
