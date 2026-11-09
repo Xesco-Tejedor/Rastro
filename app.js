@@ -453,7 +453,7 @@ async function updateSubjectBlock(scarceArg) {
     const cover = w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-M.jpg` : null;
     const acc = access[i];
     const accBadge = acc === "public" ? '<span class="badge badge-free">lectura gratis</span>'
-      : acc === "borrowable" ? '<span class="badge badge-pending">préstamo con cuenta gratis</span>' : "";
+      : acc === "borrowable" ? '<span class="badge badge-pending">acceso restringido</span>' : "";
     const url = "https://openlibrary.org" + w.key;
     return `<div class="card" data-sb="${i}">
       ${cover ? `<img src="${esc(cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
