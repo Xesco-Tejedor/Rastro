@@ -240,6 +240,214 @@ function pertinentHit(query, hayRaw) {
   return hits >= (terms.length >= 4 ? 2 : 1);
 }
 
+
+/* ==================== Por materia de catálogo ====================
+   Cuando la búsqueda por términos da poco (o se muestra una variante),
+   las fichas por MATERIA respetan el tema porque la materia la asigna el
+   catálogo al registrar la obra: se nombra siempre la materia que
+   respalda cada ficha. Una condición de autoría (mujer/hombre) se
+   verifica en Wikidata; lo no verificable queda marcado, no inventado. */
+const FICTION_RE = /novela|ficci[oó]n|fiction|\bnovel|relato|cuento/i;
+const JUVENILE_RE = /niñ|infantil|juvenil|children|kids\b|child\b/i;
+const GENDER_FEM_RE = /mujer|mujeres|autora|escritora|femenin|\bwomen\b|\bwoman\b|\bfemale\b/i;
+const GENDER_MALE_RE = /hombre|hombres|escritor\b|masculin|\bmen\b|\bmale\b/i;
+
+function subjectSlug(name) {
+  return name.toLowerCase().replace(/[()]/g, "").replace(/--/g, "_").replace(/[,.;:]/g, " ")
+    .replace(/\s+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+}
+async function olSubjectProbe(slug) {
+  try {
+    const d = await fetchJson(`https://openlibrary.org/subjects/${encodeURIComponent(slug)}.json?limit=1`);
+    return d && d.work_count ? d.work_count : 0;
+  } catch { return 0; }
+}
+async function olSubjectWorks(slug, limit) {
+  const d = await fetchJson(`https://openlibrary.org/subjects/${encodeURIComponent(slug)}.json?limit=${limit || 60}`);
+  return (d && d.works) || [];
+}
+async function wikidataGender(name) {
+  try {
+    const s = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(name)}&language=es&uselang=es&format=json&origin=*&limit=3`);
+    const cand = (s.search || []).find((c) =>
+      normTxt(c.label || "") === normTxt(name) &&
+      /escritor|poeta|novelista|autor|writer|poet|novelist|author|dramaturg|guionista/i.test(c.description || ""));
+    if (!cand) return null;
+    const c = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${cand.id}&property=P21&format=json&origin=*`);
+    const v = ((c.claims || {}).P21 || [])[0];
+    const id = v && v.mainsnak && v.mainsnak.datavalue && v.mainsnak.datavalue.value && v.mainsnak.datavalue.value.id;
+    return id === "Q6581072" ? "female" : id === "Q6581097" ? "male" : null;
+  } catch { return null; }
+}
+
+async function queryCCUCSubject(subjectWords) {
+  const clean = subjectWords.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return null;
+  const cql = `alma.subjects all "${clean}"`;
+  const url = "https://eu04.alma.exlibrisgroup.com/view/sru/34CSUC_NETWORK?version=1.2&operation=searchRetrieve&maximumRecords=12&query=" +
+    encodeURIComponent(cql);
+  const xml = await fetchText(url);
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  if (doc.querySelector("diagnostic")) throw new Error("SRU diagnostic");
+  const total = Number((doc.querySelector("numberOfRecords") || {}).textContent || 0);
+  const df = (rec, tag, code) =>
+    [...rec.querySelectorAll(`datafield[tag="${tag}"] subfield[code="${code}"]`)].map((x) => x.textContent.trim());
+  const items = [...doc.querySelectorAll("recordData > record")].map((rec) => {
+    const ctrl = (t) => ((rec.querySelector(`controlfield[tag="${t}"]`) || {}).textContent || "").trim();
+    const mms = ctrl("001");
+    const ta = (df(rec, "245", "a")[0] || "Sin título").replace(/\s*[/:;]\s*$/, "");
+    const authors = dedupeNames([...df(rec, "100", "a"), ...df(rec, "700", "a")].map((a) => a.replace(/[.,;:\s]+$/, "")));
+    const dateRaw = df(rec, "260", "c")[0] || df(rec, "264", "c")[0] || ctrl("008").slice(7, 11);
+    const y = (dateRaw || "").match(/(\d{4})/);
+    return {
+      title: ta, authors, year: cleanYear(y ? y[1] : null),
+      url: `https://ccuc.csuc.cat/discovery/fulldisplay?docid=alma${encodeURIComponent(mms)}&context=L&vid=${CCUC_VID}&lang=es`,
+    };
+  });
+  return { total, items };
+}
+
+async function updateSubjectBlock(scarceArg) {
+  const block = $("#block-subject");
+  if (!block) return;
+  block.hidden = true;
+  const raw = state.query;
+  if (state.isbn || (!scarceArg && !state.original)) return;
+  const clean = cleanedQuery(raw) || raw;
+  const enFromGloss = englishVariant(clean);
+  const variantIsEn = state.variantLabel && /ingl[eé]s/i.test(state.variantLabel);
+  let topicText = enFromGloss || (variantIsEn ? clean : null);
+  if (!topicText) {
+    /* Puente Wikipedia: tema canónico en español -> título en inglés
+       («guerra civil española» -> «Spanish Civil War»), verificado por
+       el propio Wikipedia (langlinks). */
+    const wiki = await wikipediaTopicVariants(clean).catch(() => null);
+    topicText = wiki && wiki.enTitle;
+  }
+  if (!topicText) return;
+  /* Términos de tema: se retiran formato, intención y restricciones de
+     autoría (no forman parte de la materia). */
+  const topicToks = sigTokens(topicText).filter((t) =>
+    !PERT_STOP.has(t) && !FICTION_RE.test(t) && !JUVENILE_RE.test(t) &&
+    !GENDER_FEM_RE.test(t) && !GENDER_MALE_RE.test(t) && !INTENT_WORDS.has(t));
+  if (!topicToks.length) return;
+  const fic = FICTION_RE.test(raw), juv = JUVENILE_RE.test(raw);
+  const gender = GENDER_FEM_RE.test(raw) ? "female" : (GENDER_MALE_RE.test(raw) ? "male" : null);
+
+  let sug;
+  try { sug = await fetchJson(`https://openlibrary.org/search/subjects.json?q=${encodeURIComponent(topicToks.join(" "))}`); }
+  catch { return; }
+  const cands = (sug.docs || []).filter((d) => d.name && (d.work_count || 0) > 5);
+  if (!cands.length) return;
+  const best = cands[0];
+  const baseSlug = subjectSlug(best.name);
+
+  /* Materia específica por intención: se cosechan las materias de las
+     propias obras del tema amplio y se prueban subdivisiones verificadas
+     (la materia solo se usa si el catálogo confirma que tiene obras). */
+  let chosenSlug = null, chosenLabel = null, harvestedBase = null;
+  const broadWorks = await olSubjectWorks(baseSlug, 60).catch(() => []);
+  if (fic || juv) {
+    const subjCount = {};
+    broadWorks.forEach((w) => (w.subject || []).forEach((x) => { subjCount[x] = (subjCount[x] || 0) + 1; }));
+    const bases = Object.keys(subjCount).filter((x) => {
+      const toks = sigTokens(x);
+      const skel = (x) => x.replace(/[aeiou]/g, "");
+      const tokEq = (t, u) => skel(u).startsWith(skel(t).slice(0, 3)) || skel(t).startsWith(skel(u).slice(0, 3));
+      return toks.length > topicToks.length && topicToks.every((t) => toks.some((u) => tokEq(t, u)));
+    }).sort((a, b) => subjCount[b] - subjCount[a]);
+    harvestedBase = bases[0] || null;
+    const probes = [];
+    if (harvestedBase) {
+      const bs = subjectSlug(harvestedBase);
+      if (fic) probes.push({ slug: bs + "_fiction", label: harvestedBase + " -- Fiction" });
+      if (juv) { probes.push({ slug: bs + "_juvenile_literature", label: harvestedBase + " -- Juvenile literature" }); probes.push({ slug: bs + "_juvenile_fiction", label: harvestedBase + " -- Juvenile fiction" }); }
+    }
+    if (fic) probes.push({ slug: baseSlug + "_fiction", label: best.name + " -- Fiction" });
+    if (juv) { probes.push({ slug: baseSlug + "_juvenile_literature", label: best.name + " -- Juvenile literature" }); probes.push({ slug: baseSlug + "_juvenile_fiction", label: best.name + " -- Juvenile fiction" }); }
+    for (const pr of probes) {
+      if (await olSubjectProbe(pr.slug) > 0) { chosenSlug = pr.slug; chosenLabel = pr.label; break; }
+    }
+  }
+  if (!chosenSlug) { chosenSlug = baseSlug; chosenLabel = best.name; }
+
+  let works = chosenSlug === baseSlug ? broadWorks : await olSubjectWorks(chosenSlug, 60).catch(() => []);
+  let filtered = true;
+  if (fic) { const f = works.filter((w) => (w.subject || []).some((x) => /fiction|novela|ficci/i.test(x))); if (f.length) works = f; else filtered = false; }
+  if (juv) { const f = works.filter((w) => (w.subject || []).some((x) => /juvenil|children/i.test(x))); if (f.length) works = f; else filtered = false; }
+  if (!works.length) return;
+
+  /* CCUC con la misma materia (LCSH en inglés es lo habitual en su SRU). */
+  const ccucWords = (harvestedBase || best.name).replace(/--/g, " ") + (fic ? " Fiction" : juv ? " Juvenile literature" : "");
+  const ccuc = await queryCCUCSubject(ccucWords).catch(() => null);
+
+  /* Render */
+  const note = $("#subject-note"), cardsBox = $("#subject-cards"), ccucBox = $("#subject-ccuc");
+  const shown = works.slice(0, 8);
+  const prettyLabel = chosenLabel.replace(/,\s*/g, ", ").replace(/\s*--\s*/g, " › ");
+  note.innerHTML = `La búsqueda por palabras da poco. Estas obras llevan en su registro la materia <strong>«${esc(prettyLabel)}»</strong>, asignada por el catálogo (Open Library), no interpretada por Rastro.` +
+    (filtered ? "" : ` No todas llevan la subdivisión de ficción o público: se muestran las del tema.`);
+
+  cardsBox.innerHTML = shown.map((w, i) => {
+    const author = (w.authors || [])[0] && (w.authors || [])[0].name || "";
+    const year = w.first_publish_year || null;
+    const cover = w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-M.jpg` : null;
+    const freeOk = (w.availability && (w.availability.is_readable || w.availability.is_browseable)) || w.public_scan;
+    const url = "https://openlibrary.org" + w.key;
+    return `<div class="card" data-sb="${i}">
+      ${cover ? `<img src="${esc(cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+      <div class="card-badges">${freeOk ? '<span class="badge badge-free">lectura gratis</span>' : ""}<span class="badge badge-real" data-gbadge="${i}">materia de catálogo</span></div>
+      <h3>${esc(w.title || "Sin título")}</h3>
+      <p class="meta">${esc(author)}${year ? " · " + year : ""}</p>
+      <p class="meta">Materia: ${esc(prettyLabel)} · Open Library</p>
+      ${refBtn({ title: w.title || "", authors: author ? [author] : [], year, url, kind: freeOk ? "ebook" : "print" })}
+    </div>`;
+  }).join("");
+  cardsBox.querySelectorAll(".card[data-sb]").forEach((c) =>
+    c.addEventListener("click", (ev) => { if (ev.target.closest("button")) return; window.open("https://openlibrary.org" + shown[+c.dataset.sb].key, "_blank", "noopener"); }));
+
+  if (ccuc && ccuc.total > 0) {
+    const official = `https://ccuc.csuc.cat/discovery/search?query=lsr02,contains,${encodeURIComponent(ccucWords)}&vid=${CCUC_VID}&lang=es`;
+    ccucBox.innerHTML = `<p class="section-note sub">En el CCUC (universidades catalanas, Biblioteca de Catalunya y CSUC), <a href="${esc(official)}" target="_blank" rel="noopener">${ccuc.total} registros con esa materia</a>:</p>
+      <div class="cards">${ccuc.items.slice(0, 6).map((b) => `
+        <div class="card" data-ccu="${esc(b.url)}">
+          <h3>${esc(b.title)}</h3>
+          <p class="meta">${esc(b.authors.join(", "))}${b.year ? " · " + b.year : ""}</p>
+          <p class="meta">Materia en el registro del catálogo colectivo CCUC · biblioteca y disponibilidad en la ficha enlazada</p>
+        </div>`).join("")}</div>`;
+    ccucBox.querySelectorAll(".card[data-ccu]").forEach((c) =>
+      c.addEventListener("click", () => window.open(c.dataset.ccu, "_blank", "noopener")));
+  } else {
+    ccucBox.innerHTML = "";
+  }
+  block.hidden = false;
+
+  /* Verificación de autoría en Wikidata (solo si la búsqueda la pide). */
+  if (gender) {
+    const gNote = document.createElement("p");
+    gNote.className = "section-note sub";
+    gNote.textContent = gender === "female"
+      ? "Verificando la autoría mujer en Wikidata…"
+      : "Verificando la autoría varón en Wikidata…";
+    note.after(gNote);
+    const results = await Promise.all(shown.map(async (w) => {
+      const a = (w.authors || [])[0];
+      return a && a.name ? await wikidataGender(a.name) : null;
+    }));
+    results.forEach((g, i) => {
+      const el = cardsBox.querySelector(`[data-gbadge="${i}"]`);
+      if (!el) return;
+      if (g === gender) { el.textContent = gender === "female" ? "autora mujer · verificado en Wikidata" : "autor varón · verificado en Wikidata"; el.classList.add("badge-free"); }
+      else if (g) { el.textContent = (g === "female" ? "autora mujer" : "autor varón") + " · Wikidata"; el.classList.add("badge-pending"); }
+      else { el.textContent = "autoría no verificada"; el.classList.add("badge-pending"); }
+    });
+    const okCount = results.filter((g) => g === gender).length;
+    gNote.innerHTML = gender === "female"
+      ? `Autoría mujer: <strong>${okCount} de ${shown.length} verificadas en Wikidata</strong> (propiedad sexo/género del registro de la persona). Las demás quedan marcadas: no se afirma lo no verificado.`
+      : `Autoría varón: <strong>${okCount} de ${shown.length} verificados en Wikidata</strong>. Las demás quedan marcadas: no se afirma lo no verificado.`;
+  }
+}
+
 /* Cobertura de contenido (guardrail de conservación): una expansión
    generada (tema de Wikipedia, materia OL) solo se propone si conserva
    TODOS los términos de contenido de la consulta limpia; «Joya» no es
@@ -1738,6 +1946,7 @@ $("#search-form").addEventListener("submit", async (e) => {
      se limpian aquí y se repintan al terminar (banner incluido). */
   const vb0 = $("#block-variants");
   if (vb0) { vb0.hidden = true; $("#variant-chips").innerHTML = ""; $("#variants-note").textContent = ""; }
+  const sb0 = $("#block-subject"); if (sb0) { sb0.hidden = true; $("#subject-cards").innerHTML = ""; $("#subject-ccuc").innerHTML = ""; }
   const L = activeLang();
   setChip("lang", L ? `Idioma: ${L.label}` : "Idioma: todos", "");
   $("#free-cards").innerHTML = "";
@@ -1850,5 +2059,6 @@ $("#search-form").addEventListener("submit", async (e) => {
     if (!r.error && (r.total || 0) > 0 && titleHit(r.items, (b) => b.title + " " + b.authors.join(" "))) pertinentItems += r.total;
   });
   updateVariantsBlock(pertinentItems <= 3).catch(() => {});
+  updateSubjectBlock(pertinentItems <= 3).catch(() => {});
   $("#search-btn").disabled = false;
 });
