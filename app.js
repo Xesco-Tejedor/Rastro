@@ -336,7 +336,10 @@ async function updateVariantsBlock(scarceArg) {
      de cualquier dominio + equivalente inglés), materias OL, limpieza de
      andamiaje. Después, puerta de pertinencia para todos. */
   const en = englishVariant(raw);
-  const wikiP = wikipediaTopicVariants(raw);
+  /* Wikipedia busca mejor con el tema limpio que con la pregunta cruda:
+     «aprender macramé» devolvía biografías por la palabra «aprender». */
+  const wikiQuery = cleanedQuery(raw) || sigTokens(raw).join(" ") || raw;
+  const wikiP = wikipediaTopicVariants(wikiQuery);
   const subsP = subjectVariants(raw);
   if (en) push({ text: en, label: "en inglés · todos los idiomas", lang: "all" });
   for (const t of sigTokens(raw)) {
