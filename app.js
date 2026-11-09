@@ -212,6 +212,31 @@ function stemsOverlap(aToks, bToks) {
   }));
 }
 
+/* Palabras de intención didáctica/formato: no son tema, pero tampoco
+   prescindibles en silencio: una variante que las suelta lo declara. */
+const INTENT_WORDS = new Set(["aprender", "aprende", "aprendizaje", "ensenar", "enseñar", "ensenanza", "enseñanza", "curso", "cursos", "tutorial", "tutoriales", "introduccion", "introducción", "manual", "manuales", "guia", "guía", "principiante", "principiantes"]);
+function droppedIntentWords(raw, clean) {
+  const kept = new Set(sigTokens(clean || raw));
+  return [...new Set(sigTokens(raw).filter((t) => INTENT_WORDS.has(t) && !kept.has(t)))];
+}
+
+/* Cobertura de contenido (guardrail de conservación): una expansión
+   generada (tema de Wikipedia, materia OL) solo se propone si conserva
+   TODOS los términos de contenido de la consulta limpia; «Joya» no es
+   variante de «joyas victorianas» porque suelta «victoriana». */
+function coversContent(variantText, contentToks) {
+  const vToks = sigTokens(variantText);
+  const tokCovered = (qt, vt) => {
+    const n = Math.min(qt.length, vt.length, 5);
+    if (n >= 4 && qt.slice(0, n) === vt.slice(0, n)) return true;
+    /* Plurales con familia morfológica: «joyas» se cubre por «joyería»
+       (raíz «joy-»); solo si el término acaba en -s, para no admitir
+       cambios de palabra («huerto» no se cubre por «agricultura»). */
+    return qt.length >= 4 && qt.endsWith("s") && vt.slice(0, 3) === qt.slice(0, 3);
+  };
+  return contentToks.every((qt) => vToks.some((vt) => tokCovered(qt, vt)));
+}
+
 /* Andamiaje de pregunta natural: se retira solo lo que no aporta tema
    (quiero/busco/libros sobre...). Nunca se inventa intención: la
    variante son los propios términos del usuario, aligerados. */
@@ -336,23 +361,35 @@ async function updateVariantsBlock(scarceArg) {
      de cualquier dominio + equivalente inglés), materias OL, limpieza de
      andamiaje. Después, puerta de pertinencia para todos. */
   const en = englishVariant(raw);
+  const cq = cleanedQuery(raw);
+  /* Términos de contenido: lo que queda tras retirar el andamiaje. El
+     guardrail exige que toda expansión generada los conserve todos. */
+  const contentToks = sigTokens(cq || raw);
+  const intentDrop = droppedIntentWords(raw, cq);
   /* Wikipedia busca mejor con el tema limpio que con la pregunta cruda:
      «aprender macramé» devolvía biografías por la palabra «aprender». */
-  const wikiQuery = cleanedQuery(raw) || sigTokens(raw).join(" ") || raw;
+  const wikiQuery = cq || sigTokens(raw).join(" ") || raw;
   const wikiP = wikipediaTopicVariants(wikiQuery);
   const subsP = subjectVariants(raw);
-  if (en) push({ text: en, label: "en inglés · todos los idiomas", lang: "all" });
+  /* Declaración de pérdida: si el usuario pedía aprender/curso/tutorial...,
+     la variante que no conserva esa palabra lo dice en su etiqueta. */
+  const declareLoss = (v) => {
+    const missing = intentDrop.filter((w) => !coversContent(v.text, [w]));
+    if (missing.length) v.label += " · sin «" + missing.join("», «") + "»";
+    return v;
+  };
+  if (en) push(declareLoss({ text: en, label: "en inglés · todos los idiomas", lang: "all" }));
   for (const t of sigTokens(raw)) {
     for (const syn of (GLOSS_SYN[t] || [])) {
-      push({ text: applySynonym(raw, t, syn), label: "sinónimo" });
+      push(declareLoss({ text: applySynonym(raw, t, syn), label: "sinónimo" }));
     }
   }
-  const cq = cleanedQuery(raw);
-  if (cq) push({ text: cq, label: "términos clave" });
+  if (cq) push(declareLoss({ text: cq, label: "términos clave" }));
   const [wiki, subs] = await Promise.all([wikiP, subsP]);
-  wiki.topics.forEach((t) => push({ text: t, label: "tema de Wikipedia" }));
-  if (wiki.enTitle) push({ text: wiki.enTitle, label: "en inglés · todos los idiomas", lang: "all" });
-  subs.forEach((nm) => push({ text: nm, label: "materia de Open Library" }));
+  const coveredTopics = wiki.topics.filter((t) => coversContent(t, contentToks));
+  coveredTopics.forEach((t) => push(declareLoss({ text: t, label: "tema de Wikipedia" })));
+  if (wiki.enTitle && coveredTopics.length && normTxt(coveredTopics[0]) === normTxt(wiki.topics[0])) push(declareLoss({ text: wiki.enTitle, label: "en inglés · todos los idiomas", lang: "all" }));
+  subs.filter((nm) => coversContent(nm, contentToks)).forEach((nm) => push(declareLoss({ text: nm, label: "materia de Open Library" })));
 
   /* Puerta de pertinencia en paralelo: solo chips que recuperan libros. */
   const gated = await Promise.all(items.map(async (v) => (await variantGate(v.text)) ? v : null));
