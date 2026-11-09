@@ -1150,6 +1150,34 @@ const LIB_SOURCES = [
   },
 ];
 
+
+/* Clasifica por qué una fuente no ha dado respuesta válida: se informa de
+   la causa concreta cuando se conoce, sin prometer que "la próxima vez"
+   funcione. */
+function sourceErrorInfo(e) {
+  if (e && e.name === "AbortError") return { kind: "timeout" };
+  const m = /HTTP (\d+)/.exec((e && e.message) || "");
+  if (m) return { kind: "http", status: +m[1] };
+  if (/diagnostic/i.test((e && e.message) || "")) return { kind: "invalid" };
+  return { kind: "network" };
+}
+function sourceErrorText(info, name, link) {
+  const causa = info.kind === "timeout"
+    ? "El catálogo no ha respondido en 12 segundos (conexión lenta o saturada ahora mismo)."
+    : info.kind === "http" && info.status === 429
+      ? "El catálogo indica que recibe demasiadas peticiones ahora mismo (HTTP 429)."
+      : info.kind === "http" && info.status === 403
+        ? "El catálogo ha rechazado la consulta automática (HTTP 403)."
+        : info.kind === "http" && info.status >= 500
+          ? `El catálogo tiene un fallo interno ahora mismo (HTTP ${info.status}).`
+          : info.kind === "http"
+            ? `El catálogo ha respondido con un error (HTTP ${info.status}).`
+            : info.kind === "invalid"
+              ? "El catálogo ha respondido, pero con un formato que Rastro no ha sabido interpretar."
+              : "No se ha podido conectar con el catálogo (red interrumpida o bloqueo del navegador).";
+  return `${causa} Esto NO significa que no tenga registros: <a href="${esc(link)}" target="_blank" rel="noopener">busca directamente en la web oficial de ${esc(name)}</a>.`;
+}
+
 async function queryAllLibs(raw, isbn) {
   const clean = raw.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
   return Promise.all(LIB_SOURCES.map(async (s) => {
@@ -1158,8 +1186,12 @@ async function queryAllLibs(raw, isbn) {
       setChip(s.id, `${s.chip}: ${r.total} ${r.total === 1 ? "registro" : "registros"}`, "ok");
       return { src: s, total: r.total, items: r.items, error: false };
     } catch (e) {
-      setChip(s.id, `${s.chip}: sin respuesta`, "warn");
-      return { src: s, total: 0, items: [], error: true };
+      const info = sourceErrorInfo(e);
+      const motivo = info.kind === "timeout" ? "no responde en 12 s" :
+        info.kind === "http" ? `error HTTP ${info.status}` :
+        info.kind === "invalid" ? "respuesta no interpretable" : "sin conexión";
+      setChip(s.id, `${s.chip}: ${motivo}`, "warn");
+      return { src: s, total: 0, items: [], error: true, errorInfo: info };
     }
   }));
 }
@@ -1169,7 +1201,7 @@ function renderLibs(results) {
   if (!results || !results.length) { box.innerHTML = ""; return; }
   box.innerHTML = results.map((r) => {
     if (r.error) {
-      return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">Sin respuesta en este momento; se reintenta en la próxima búsqueda.</p></div>`;
+      return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">${sourceErrorText(r.errorInfo || {}, r.src.chip, r.src.searchUrl(state.isbn || state.query))}</p></div>`;
     }
     if (!r.items.length) {
       const nota = r.total > 0
@@ -1757,6 +1789,10 @@ function renderCCUC(res) {
   meta.innerHTML = "";
   after.innerHTML = "";
   const official = `https://ccuc.csuc.cat/discovery/search?query=any,contains,${encodeURIComponent(state.isbn || state.query)}&vid=${CCUC_VID}&lang=es`;
+  if (res && res.error) {
+    meta.innerHTML = `<p class="empty-note">${sourceErrorText(res.errorInfo || {}, "CCUC", official)}</p>`;
+    return;
+  }
   if (!res || !res.items.length) {
     meta.innerHTML = res && res.total === null
       ? '<p class="empty-note">El CCUC no se puede consultar por ISBN en esta versión (su zona de red no lo indexa). Prueba por título o autor.</p>'
@@ -2007,7 +2043,14 @@ $("#search-form").addEventListener("submit", async (e) => {
       }
       setChip("ccuc", `CCUC: ${r.total} registros${byTitle ? " (por título)" : ""}`, "ok");
       return r;
-    } catch { setChip("ccuc", "CCUC: sin respuesta", "warn"); return { total: 0, items: [] }; }
+    } catch (e) {
+      const info = sourceErrorInfo(e);
+      const motivo = info.kind === "timeout" ? "no responde en 12 s" :
+        info.kind === "http" ? `error HTTP ${info.status}` :
+        info.kind === "invalid" ? "respuesta no interpretable" : "sin conexión";
+      setChip("ccuc", `CCUC: ${motivo}`, "warn");
+      return { total: 0, items: [], error: true, errorInfo: info };
+    }
   })();
 
   const libsP = queryAllLibs(raw, state.isbn);
