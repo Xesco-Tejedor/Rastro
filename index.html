@@ -164,6 +164,7 @@
         <tr><td>BNE · Library of Congress · BnF · DNB · K10plus · LIBRIS</td><td><span class="badge badge-real">consulta real</span></td><td>Catálogos nacionales y colectivos consultados en directo; cada tarjeta enlaza la ficha oficial, donde se confirma biblioteca y disponibilidad. Cobertura y límites de cada fuente se muestran en su bloque.</td></tr>
         <tr><td>CCUC (bibliotecas)</td><td><span class="badge badge-real">consulta real</span></td><td>Registros del catálogo colectivo: universidades catalanas, Biblioteca de Catalunya y otras del CSUC. La disponibilidad por biblioteca se confirma en la ficha enlazada. Por ISBN se busca por el título resuelto (la zona de red no indexa ISBN).</td></tr>
         <tr><td>Wikipedia (es)</td><td><span class="badge badge-real">consulta real</span></td><td>Solo para sugerir variantes de búsqueda cuando nada responde al tema: término canónico del tema y su equivalente en inglés (misma API pública de Wikimedia que Wikisource). Nunca se presenta como fuente de libros.</td></tr>
+        <tr><td>Reformulación IA (Cloudflare Workers AI)</td><td><span class="badge badge-real">consulta real</span></td><td>Solo cuando una búsqueda da muy poco: tu consulta se envía al servicio Workers AI de Cloudflare (cuenta gratuita propia del autor, modelo Mistral Small) para proponer variantes que conserven lo que pides. Cloudflare <a href="https://developers.cloudflare.com/workers-ai/platform/data-usage/" rel="noopener">no retiene las consultas ni las usa para entrenar</a>. La cuota diaria gratuita es compartida; si se agota, las variantes IA no aparecen y todo lo demás sigue igual. Nunca es fuente de libros.</td></tr>
         <tr><td>IberLibro · AbeBooks</td><td><span class="badge badge-link">búsqueda directa</span></td><td>Enlace con la búsqueda preparada. Segunda mano: el estado y precio se ven en la tienda.</td></tr>
         <tr><td>Amazon · La Central · Laie</td><td><span class="badge badge-link">búsqueda directa</span></td><td>Enlace con la búsqueda preparada. Precio y stock se comprueban en la tienda.</td></tr>
       </tbody>
@@ -183,6 +184,6 @@
   <p>Rastro · demo pública · <a href="https://github.com/Xesco-Tejedor/Rastro">código en GitHub</a></p>
 </footer>
 
-<script src="app.js?v=26"></script>
+<script src="app.js?v=27"></script>
 </body>
 </html>
