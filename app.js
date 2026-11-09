@@ -1638,6 +1638,10 @@ $("#search-form").addEventListener("submit", async (e) => {
   $("#results").hidden = false;
   $("#search-btn").disabled = true;
   clearChips();
+  /* Las variantes de la búsqueda anterior no deben verse durante la nueva:
+     se limpian aquí y se repintan al terminar (banner incluido). */
+  const vb0 = $("#block-variants");
+  if (vb0) { vb0.hidden = true; $("#variant-chips").innerHTML = ""; $("#variants-note").textContent = ""; }
   const L = activeLang();
   setChip("lang", L ? `Idioma: ${L.label}` : "Idioma: todos", "");
   $("#free-cards").innerHTML = "";
