@@ -317,6 +317,8 @@ async function updateSubjectBlock(scarceArg) {
   const block = $("#block-subject");
   if (!block) return;
   block.hidden = true;
+  const oldGnote = $("#subject-gnote");
+  if (oldGnote) oldGnote.remove();
   const raw = state.query;
   if (state.isbn || (!scarceArg && !state.original)) return;
   const clean = cleanedQuery(raw) || raw;
@@ -484,6 +486,7 @@ async function updateSubjectBlock(scarceArg) {
   /* Verificación de autoría en Wikidata (solo si la búsqueda la pide). */
   if (gender) {
     const gNote = document.createElement("p");
+    gNote.id = "subject-gnote";
     gNote.className = "section-note sub";
     gNote.textContent = gender === "female"
       ? "Verificando la autoría mujer en Wikidata…"
