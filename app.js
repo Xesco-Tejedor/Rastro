@@ -330,11 +330,14 @@ async function updateSubjectBlock(scarceArg) {
     !PERT_STOP.has(t) && !FICTION_RE.test(t) && !JUVENILE_RE.test(t) &&
     !GENDER_FEM_RE.test(t) && !GENDER_MALE_RE.test(t) && !INTENT_WORDS.has(t));
   if (!topicText && topicToksPre.length) {
-    /* Puente Wikipedia: tema canónico en español -> título en inglés
-       («guerra civil española» -> «Spanish Civil War»), verificado por
-       el propio Wikipedia (langlinks). */
-    const wiki = await wikipediaTopicVariants(topicToksPre.join(" ")).catch(() => null);
-    topicText = wiki && wiki.enTitle;
+    /* Tema canónico: primero la entidad de Wikidata (etiqueta en inglés
+       estructurada); si no, el puente Wikipedia (langlinks), que la
+       búsqueda de texto completo de Wikipedia a veces no resuelve. */
+    topicText = await wikidataEnglishLabel(topicToksPre.join(" "));
+    if (!topicText) {
+      const wiki = await wikipediaTopicVariants(topicToksPre.join(" ")).catch(() => null);
+      topicText = wiki && wiki.enTitle;
+    }
   }
   if (!topicText) return;
   /* Términos de tema: se retiran formato, intención y restricciones de
@@ -501,6 +504,35 @@ function cleanedQuery(raw) {
    Solo se aceptan títulos con solape léxico con la consulta: sin solape,
    preferimos silencio a ruido. Devuelve también el equivalente inglés
    (langlink) del primer tema aceptado. */
+/* Tema canónico vía Wikidata: la entidad cuya etiqueta en español está
+   contenida en los términos de la consulta (sin términos ajenos) da su
+   etiqueta en inglés: «guerra civil española» -> «Spanish Civil War».
+   Es un dato estructurado de la entidad, no una interpretación. */
+async function wikidataEnglishLabel(esTerms) {
+  const skel = (x) => x.replace(/[aeiou]/g, "");
+  const tokEq = (t, u) => skel(u).startsWith(skel(t).slice(0, 3)) || skel(t).startsWith(skel(u).slice(0, 3));
+  const qToks = sigTokens(esTerms);
+  /* La búsqueda de Wikidata falla con términos ajenos («ambientadas»):
+     se prueba la frase completa y luego quitando un término cada vez. */
+  const tries = [qToks.join(" ")];
+  qToks.forEach((_, i) => { if (qToks.length > 1) tries.push(qToks.filter((__, j) => j !== i).join(" ")); });
+  for (const q of tries) {
+    try {
+      const s = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}&language=es&uselang=es&format=json&origin=*&limit=4&type=item`);
+      const cand = (s.search || []).find((c) => {
+        const lToks = sigTokens(c.label || "");
+        return lToks.length && lToks.every((u) => qToks.some((t) => tokEq(t, u)));
+      });
+      if (!cand) continue;
+      const e = await fetchJson(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${cand.id}&props=labels&languages=en&format=json&origin=*`);
+      const ent = e.entities && e.entities[cand.id];
+      const lbl = ent && ent.labels && ent.labels.en && ent.labels.en.value;
+      if (lbl) return lbl.replace(/\s*\(.*\)\s*$/, "").trim();
+    } catch { return null; }
+  }
+  return null;
+}
+
 async function wikipediaTopicVariants(raw) {
   const topics = [];
   let enTitle = null;
