@@ -336,6 +336,24 @@ async function subjectVariants(raw, limit = 2) {
   return out;
 }
 
+/* Reformulación IA autorizada por el usuario (9 nov 2026): su propia
+   cuenta gratuita de Cloudflare Workers AI (worker rastro-rewrite,
+   modelo Mistral Small 3.1). La consulta se envía a Cloudflare, que no
+   la retiene ni la usa para entrenar (política enlazada en Fuentes).
+   Si el worker falla o la cuota diaria se agota, Rastro sigue igual. */
+async function aiRewrite(raw) {
+  try {
+    const r = await fetch("https://rastro-rewrite.francesc-adria-perello.workers.dev/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: raw }),
+    });
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.queries || []).filter((x) => x && x.text);
+  } catch { return []; }
+}
+
 function runVariant(v) {
   if (!state.original) state.original = { query: state.query, lang: state.lang };
   state.variantLabel = v.label;
@@ -371,6 +389,9 @@ async function updateVariantsBlock(scarceArg) {
   const wikiQuery = cq || sigTokens(raw).join(" ") || raw;
   const wikiP = wikipediaTopicVariants(wikiQuery);
   const subsP = subjectVariants(raw);
+  /* La reformulación IA solo se pide con escasez real (no al mostrar una
+     variante ya activa): así no se gasta cuota en búsquedas fructíferas. */
+  const aiP = scarce ? aiRewrite(raw) : Promise.resolve([]);
   /* Declaración de pérdida: si el usuario pedía aprender/curso/tutorial...,
      la variante que no conserva esa palabra lo dice en su etiqueta. */
   const declareLoss = (v) => {
@@ -385,7 +406,14 @@ async function updateVariantsBlock(scarceArg) {
     }
   }
   if (cq) push(declareLoss({ text: cq, label: "términos clave" }));
-  const [wiki, subs] = await Promise.all([wikiP, subsP]);
+  const [wiki, subs, ai] = await Promise.all([wikiP, subsP, aiP]);
+  /* Primero la reformulación IA (conservación de restricciones por
+     instrucción; la puerta de pertinencia filtra como con el resto). */
+  ai.forEach((x) => push({
+    text: x.text,
+    label: x.lang === "en" ? "reformulación IA · en inglés · todos los idiomas" : "reformulación IA (Cloudflare)",
+    lang: x.lang === "en" ? "all" : undefined,
+  }));
   const coveredTopics = wiki.topics.filter((t) => coversContent(t, contentToks));
   coveredTopics.forEach((t) => push(declareLoss({ text: t, label: "tema de Wikipedia" })));
   if (wiki.enTitle && coveredTopics.length && normTxt(coveredTopics[0]) === normTxt(wiki.topics[0])) push(declareLoss({ text: wiki.enTitle, label: "en inglés · todos los idiomas", lang: "all" }));
