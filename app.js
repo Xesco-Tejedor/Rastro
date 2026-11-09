@@ -413,22 +413,31 @@ async function updateSubjectBlock(scarceArg) {
     shown = [...pool].sort((a, b) => rank(a) - rank(b)).slice(0, 6);
   }
   const prettyLabel = chosenLabel.replace(/,\s*/g, ", ").replace(/\s*--\s*/g, " › ");
-  note.innerHTML = `La búsqueda por palabras da poco. Estas obras llevan en su registro la materia <strong>«${esc(prettyLabel)}»</strong>, asignada por el catálogo (Open Library), no interpretada por Rastro.` +
+  note.innerHTML = `La búsqueda por palabras da poco. Obras con la materia <strong>«${esc(prettyLabel)}»</strong> registrada en el catálogo (Open Library), no interpretada por Rastro.` +
     (filtered ? "" : ` No todas llevan la subdivisión de ficción o público: se muestran las del tema.`);
+
+  /* Acceso real: se comprueba el ítem concreto de Archive.org de la edición
+     enlazada (público / préstamo con cuenta); sin ítem no se afirma nada. */
+  const access = await Promise.all(shown.map(async (w) => {
+    const id = w.availability && w.availability.identifier;
+    return id ? await iaAccess(id).catch(() => null) : null;
+  }));
 
   cardsBox.innerHTML = shown.map((w, i) => {
     const author = (w.authors || [])[0] && (w.authors || [])[0].name || "";
     const year = w.first_publish_year || null;
     const cover = w.cover_id ? `https://covers.openlibrary.org/b/id/${w.cover_id}-M.jpg` : null;
-    const freeOk = (w.availability && (w.availability.is_readable || w.availability.is_browseable)) || w.public_scan;
+    const acc = access[i];
+    const accBadge = acc === "public" ? '<span class="badge badge-free">lectura gratis</span>'
+      : acc === "borrowable" ? '<span class="badge badge-pending">préstamo con cuenta gratis</span>' : "";
     const url = "https://openlibrary.org" + w.key;
     return `<div class="card" data-sb="${i}">
       ${cover ? `<img src="${esc(cover)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
-      <div class="card-badges">${freeOk ? '<span class="badge badge-free">lectura gratis</span>' : ""}<span class="badge badge-real" data-gbadge="${i}">materia de catálogo</span></div>
+      <div class="card-badges">${accBadge}<span class="badge badge-real" data-gbadge="${i}">materia de catálogo</span></div>
       <h3>${esc(w.title || "Sin título")}</h3>
       <p class="meta">${esc(author)}${year ? " · " + year : ""}</p>
       <p class="meta">Materia: ${esc(prettyLabel)} · Open Library</p>
-      ${refBtn({ title: w.title || "", authors: author ? [author] : [], year, url, kind: freeOk ? "ebook" : "print" })}
+      ${refBtn({ title: w.title || "", authors: author ? [author] : [], year, url, kind: acc === "public" ? "ebook" : "print" })}
     </div>`;
   }).join("");
   cardsBox.querySelectorAll(".card[data-sb]").forEach((c) =>
@@ -468,11 +477,14 @@ async function updateSubjectBlock(scarceArg) {
     });
     const poolN = genderMap.size;
     const okPool = [...genderMap.values()].filter((g) => g === gender).length;
-    const gWord = gender === "female" ? "mujer" : "varón";
-    const metodo = " Verificación: la ficha de Open Library enlaza al registro de la persona en Wikidata y se comprueba su propiedad sexo/género; sin ese enlace queda marcada como no verificada.";
-    gNote.innerHTML = okPool > 0
-      ? `Autoría ${gWord}: <strong>${okPool} de ${poolN} obras del tema verificadas</strong>; se muestran primero las que la cumplen.${metodo}`
-      : `Autoría ${gWord}: <strong>ninguna verificada entre las ${poolN} primeras obras del tema</strong>; se muestran obras del tema con su estado, sin afirmar lo no verificado.${metodo}`;
+    const resumen = okPool > 0
+      ? (gender === "female"
+        ? `<strong>${okPool} autoras identificadas entre ${poolN} obras</strong> catalogadas bajo esa materia; se muestran primero las que la cumplen.`
+        : `<strong>${okPool} autores identificados entre ${poolN} obras</strong> catalogadas bajo esa materia; se muestran primero las que la cumplen.`)
+      : (gender === "female"
+        ? `<strong>Ninguna autora verificada entre las ${poolN} primeras obras</strong> del tema; se muestran con su estado, sin afirmar lo no verificado.`
+        : `<strong>Ningún autor verificado entre las ${poolN} primeras obras</strong> del tema; se muestran con su estado, sin afirmar lo no verificado.`);
+    gNote.innerHTML = `${resumen} <details class="lib-group"><summary>Cómo se verifica</summary><p class="section-note sub">La ficha de cada obra en Open Library enlaza al registro de la persona en Wikidata y se comprueba su propiedad sexo/género; sin ese enlace queda «autoría no verificada», que no significa autor desconocido. La materia registrada en el catálogo respalda el tema pero no prueba la ambientación íntegra de cada obra.</p></details>`;
   }
 }
 
@@ -1237,7 +1249,7 @@ function sourceErrorText(info, name, link) {
               : info.kind === "network"
                 ? "No hay conexión a internet en este momento (lo indica el propio navegador)."
                 : "La consulta al catálogo ha fallado por una causa que Rastro no ha podido identificar (no consta timeout, código de error ni formato inválido).";
-  return `${causa} Esto NO significa que no tenga registros: <a href="${esc(link)}" target="_blank" rel="noopener">busca directamente en la web oficial de ${esc(name)}</a>.`;
+  return `${causa} Que la consulta falle no significa que no tenga registros: <a href="${esc(link)}" target="_blank" rel="noopener">web oficial de ${esc(name)}</a>.`;
 }
 
 async function queryAllLibs(raw, isbn) {
@@ -1284,7 +1296,7 @@ function renderLibs(results) {
     }
     const showItems = r.pertinent || r.items;
     if (r.pertinent && !r.pertinent.length && r.total > 0) {
-      const nota = `El catálogo devuelve ${r.total} ${r.total === 1 ? "registro" : "registros"} por coincidencia amplia de palabras, pero ninguno de los recuperados coincide claramente con el tema en título o autor (filtro léxico: la pertinencia no está confirmada ni descartada, y no se presentan como resultados). <a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial de ${esc(r.src.chip)}</a>`;
+      const nota = `${r.total} ${r.total === 1 ? "registro" : "registros"} por coincidencia amplia, sin coincidencia clara en título o autor (ni confirmada ni descartada; no se presentan como resultados). <a href="${esc(r.src.searchUrl(state.isbn || state.query))}" target="_blank" rel="noopener">Buscar en la web oficial de ${esc(r.src.chip)}</a>`;
       return `<div class="lib-group" id="libgroup-${r.src.id}"><h3>${esc(r.src.name)}</h3><p class="empty-note">${nota}</p></div>`;
     }
     const qNorm = normTxt(state.isbn || state.query);
@@ -1878,7 +1890,7 @@ function renderCCUC(res) {
     return;
   }
   if (res && res.pertinent && !res.pertinent.length && res.items.length) {
-    meta.innerHTML = `<p class="empty-note">El CCUC devuelve ${res.total} registros por coincidencia amplia de palabras, pero ninguno de los recuperados coincide claramente con el tema en título o autor (filtro léxico: la pertinencia no está confirmada ni descartada, y no se presentan como resultados). <a href="${esc(official)}" target="_blank" rel="noopener">Ver la búsqueda en la web oficial del CCUC</a></p>`;
+    meta.innerHTML = `<p class="empty-note">El CCUC devuelve ${res.total} registros por coincidencia amplia, sin coincidencia clara en título o autor (ni confirmada ni descartada). <a href="${esc(official)}" target="_blank" rel="noopener">Buscar en la web oficial del CCUC</a></p>`;
     return;
   }
   if (!res || !res.items.length) {
